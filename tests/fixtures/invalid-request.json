@@ -1,0 +1,7 @@
+{
+  "error": {
+    "type": "invalid_request_error",
+    "message": "Your request was rejected as a result of our safety system.",
+    "code": "moderation_blocked"
+  }
+}

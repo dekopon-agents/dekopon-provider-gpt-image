@@ -1,0 +1,67 @@
+{
+  "apiVersion": "dekopon.dev/provider/v1alpha1",
+  "id": "gpt-image",
+  "description": "Generates and edits images with OpenAI's GPT Image models, billed to a ChatGPT subscription, and returns one PNG per invocation as a result attachment",
+  "capabilities": [
+    {
+      "id": "gpt-image.generate",
+      "description": "Generates one new image from a prompt and returns it as a PNG attachment",
+      "effect": "external-write",
+      "risk": "Medium",
+      "idempotency": "non-idempotent",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "prompt": {
+            "description": "What to draw, in words. The service chooses the quality, the size, and the format itself — there is no quality, size, background, or model field — so ask in the prompt for whatever you want steered: the subject, the style, the palette, the composition, and the orientation (\"a tall portrait poster\", \"a wide landscape banner\", \"square\"). One image per call.",
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "id": "gpt-image.edit",
+      "description": "Remixes one to three supplied images into one new image from a prompt and returns it as a PNG attachment",
+      "effect": "external-write",
+      "risk": "Medium",
+      "idempotency": "non-idempotent",
+      "inputSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "images": {
+            "description": "The images to remix, as data URLs: data:image/png;base64,… (png, jpeg, or webp), at most 8 MiB decoded each. On a route that allows chat asset inputs for this capability, write chat-asset:<N> instead and the gateway substitutes the attachment's bytes before the call; on any other route that marker is refused.",
+            "items": {
+              "maxLength": 11184835,
+              "minLength": 24,
+              "pattern": "^(data:image/(png|jpeg|webp);base64,|chat-asset:)",
+              "type": "string"
+            },
+            "maxItems": 3,
+            "minItems": 1,
+            "type": "array"
+          },
+          "prompt": {
+            "description": "What to draw, in words. The service chooses the quality, the size, and the format itself — there is no quality, size, background, or model field — so ask in the prompt for whatever you want steered: the subject, the style, the palette, the composition, and the orientation (\"a tall portrait poster\", \"a wide landscape banner\", \"square\"). One image per call.",
+            "maxLength": 16384,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "prompt",
+          "images"
+        ],
+        "type": "object"
+      }
+    }
+  ],
+  "commandWords": [
+    "image"
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "error": {
+    "type": "usage_not_included",
+    "message": "Image generation is not included in your current plan."
+  }
+}

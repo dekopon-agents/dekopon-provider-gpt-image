@@ -1,0 +1,7 @@
+{
+  "error": {
+    "type": "usage_limit_reached",
+    "message": "You've hit your limit for image generation. Upgrade or try again later.",
+    "code": "image_gen_limit"
+  }
+}

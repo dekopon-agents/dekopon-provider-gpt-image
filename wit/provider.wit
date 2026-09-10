@@ -1,0 +1,8 @@
+package dekopon:gpt-image@0.1.0;
+
+/// Two bounded GPT Image operations — generate and edit — that require broker-mediated HTTP and
+/// contribute the `image` command word.
+world provider {
+    include dekopon:provider/provider-cli@0.3.0;
+    import dekopon:http/client@1.0.0;
+}

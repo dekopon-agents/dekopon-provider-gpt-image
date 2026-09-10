@@ -1,0 +1,53 @@
+[workspace]
+
+[package]
+name = "dekopon-gpt-image-provider"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89.0"
+license = "MIT OR Apache-2.0"
+description = "GPT Image generation and editing for Dekopon, billed to a ChatGPT subscription, as a Wasm component"
+repository = "https://github.com/dekopon-agents/dekopon-provider-gpt-image"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# TODO(release): re-pin both to `= "0.13.0"` from crates.io when dekopon 0.13.0 publishes, drop the
+# `git`/`rev` keys, and change the CI WIT-mirror step's reference from the rev to tag `v0.13.0`.
+#
+# A crates.io pin is impossible today. This provider's world includes
+# `dekopon:provider/provider-cli@0.3.0` — the `run-command` facade that renders `--help` and usage
+# errors in the guest — and the newest published SDK carries `dekopon:provider@0.2.0`, whose
+# `provider-commands` world has no such export. The pin is therefore a full 40-character commit
+# SHA, never a branch: a `branch =` dependency resolves by fetching the ref, so deleting the branch
+# upstream breaks a cold build, which is exactly how the first out-of-tree provider rotted.
+dekopon-provider-http = { git = "https://github.com/dekopon-agents/dekopon", rev = "5725859066b565d6d4dceb4e4b4be3c901e8c855" }
+dekopon-provider-sdk = { git = "https://github.com/dekopon-agents/dekopon", rev = "5725859066b565d6d4dceb4e4b4be3c901e8c855", features = ["clap"] }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+# 0.46.0, not the 0.44.0 the other out-of-tree providers pin: it is the version the SDK and the
+# HTTP binding generate their own bindings with at the pinned rev, and two wit-bindgen runtimes in
+# one component define `cabi_realloc` twice.
+wit-bindgen = { version = "=0.46.0", default-features = false, features = ["macros", "realloc"] }
+
+# No base64 crate. This guest needs exactly two things from base64 — that a string is in the
+# standard alphabet, and the first twelve bytes of one — and both are a few lines of arithmetic
+# over bytes. A decoder in the dependency graph would invite calling it on an 11 MiB blob, which is
+# the one thing the memory budget forbids.
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+
+[lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = "s"
+panic = "abort"
+strip = "symbols"
