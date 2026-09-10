@@ -1,0 +1,125 @@
+# dekopon-brokerd — the only process in this example that holds any authority.
+#
+# It owns the socket, policy, constraint sets, the ChatGPT credential file, and the audit log. The
+# gateway holds none of those; it holds Slack credentials and access to a model endpoint.
+#
+# Hygiene, all checked at startup and all fatal:
+#   chmod 0600 broker.yaml policies.cedar
+#   chmod 0600 broker-credentials.yaml        # 0o077 — group/world *readable* is refused too
+#   chmod 0700 ~/.local/run/dekopon ~/.local/state/dekopon
+#   chmod 0700 ~/.config/dekopon && chmod 0600 ~/.config/dekopon/chatgpt-auth.gpt-image.json
+# Every relative path below resolves against this file's own directory, so the example runs from a
+# checkout without editing repository paths. The absolute `/home/xavier/...` paths are runtime state
+# and are the ones to change.
+apiVersion: dekopon.dev/brokerd/v1alpha1
+
+socketPath: /home/xavier/.local/run/dekopon/broker.sock
+auditPath: /home/xavier/.local/state/dekopon/audit.jsonl
+
+brokerPrincipal: local-broker
+policyRevision: chat-image-studio-2026-09
+
+# Copy broker-credentials.yaml.example, point it at the auth file, and `chmod 600` it. Startup fails
+# closed if it is missing, group-readable, or names no `chatgpt-gpt-image`.
+credentialsPath: broker-credentials.yaml
+policiesPath: policies.cedar
+
+# This deployment's provider set is fixed and checked in. A capability typo is a mistake, not an
+# anticipation, so refuse startup instead of warning.
+strict: true
+
+providers:
+  # The checked-in component: two capabilities, one POST each, one host.
+  # It must be a regular single-link file owned by this UID under owner-controlled directories.
+  - ../../gpt-image-provider.wasm
+
+# Process-global ceilings. Every constraint set may only narrow these, so they are raised exactly as
+# far as one ~11 MiB base64 image plus its envelope needs and no further. `maxMemoryBytes` is
+# deliberately absent: it stays at the 64 MiB default, which every provider's store reserves against
+# `maxTotalMemoryBytes`, and the component is measured to fit inside it.
+hostLimits:
+  maxInputBytes: 12582912
+  maxOutputBytes: 12582912
+  maxHttpRequestBytes: 12582912
+  maxHttpResponseBytes: 12582912
+  maxTimeoutMs: 300000
+  maxTotalMemoryBytes: 268435456
+
+serverLimits:
+  # One result carries one ~11 MiB image. Startup requires maxFrameBytes ≥ maxOutputBytes + 64 KiB,
+  # and the protocol's own hard cap is 16 MiB.
+  maxFrameBytes: 14680064
+
+identities:
+  # 501 is the server's own UID, which is what the owner-only socket currently permits. Change it to
+  # your own (`id -u`). In this single-UID deployment the attestor grant buys attribution and
+  # deny-by-default scoping, not process isolation.
+  - uid: 501
+    principal: dekopond-gateway
+    actor:
+      type: service
+      principal: dekopond-gateway
+    attestor:
+      # Segment-boundary prefixes, service name first. This lets the gateway name Slack subjects in
+      # this workspace; it resolves none of them to a principal.
+      namespaces: [slack.t0123abcd]
+      chatScopes:
+        - breadth: transportWide
+          kind: slack
+          transport: workspace-slack
+
+identityMappings:
+  # The only place a Slack user becomes a principal. An unmapped sender reaches nothing.
+  - subject: slack.t0123abcd.u0123abcd
+    principal: artist
+
+constraintSets:
+  # One entry per capability policy may reach. A capability with no entry is denied
+  # `unconstrained-capability` before Cedar is consulted. Effect, risk, and idempotency must match
+  # the component's manifest byte for byte or the broker refuses to start.
+  #
+  # `timeoutMs: 240000` is sized for generation taking tens of seconds and occasionally minutes: the
+  # route sets no timeout of its own. `maxRequests: 1` is the whole HTTP budget — one POST per
+  # invocation, and a component that tried a second call would be denied mid-invocation.
+  gpt-image.generate:
+    provider: gpt-image
+    effect: external-write
+    risk: Medium
+    idempotency: non-idempotent
+    credential: chatgpt-gpt-image
+    constraints:
+      timeoutMs: 240000
+      maxOutputBytes: 12582912
+      http:
+        allowedHosts: [chatgpt.com]
+        allowedMethods: [POST]
+        maxRequests: 1
+        maxRequestBytes: 12582912
+        maxResponseBytes: 12582912
+        allowPlaintextLoopback: false
+  gpt-image.edit:
+    provider: gpt-image
+    effect: external-write
+    risk: Medium
+    idempotency: non-idempotent
+    credential: chatgpt-gpt-image
+    constraints:
+      timeoutMs: 240000
+      maxOutputBytes: 12582912
+      http:
+        allowedHosts: [chatgpt.com]
+        allowedMethods: [POST]
+        maxRequests: 1
+        maxRequestBytes: 12582912
+        maxResponseBytes: 12582912
+        allowPlaintextLoopback: false
+
+# Optional. Uncomment to export broker spans; the ingest token is read from
+# OTEL_EXPORTER_OTLP_HEADERS by the SDK and never appears in this file. `broker.credential.refresh`
+# with `outcome=rotated` is the span that proves the broker is refreshing its own ChatGPT token.
+# telemetry:
+#   endpoint: http://127.0.0.1:5080/api/default
+#   transport: http
+#   serviceName: dekopon-brokerd
+#   exportTimeoutMs: 5000
+#   telemetryPayloads: false
