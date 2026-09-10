@@ -127,8 +127,13 @@ jobs:
           test -s "$core"
           wasm-tools validate "$core"
           wasm-tools validate gpt-image-provider.wasm
-          wasm-tools metadata show "$core" | grep -q 'Rust'
-          wasm-tools metadata show gpt-image-provider.wasm | grep -q 'wit-bindgen-rust'
+          # The release profile sets `strip = "symbols"`, which also drops the core module's
+          # `producers` section, so provenance is asserted on the component: wit-component writes
+          # its own `producers` entry naming wit-bindgen-rust, and that one survives the strip.
+          # Written to a file first, as scripts/validate.sh does: under `pipefail`, `| grep -q`
+          # exits on the first match and the SIGPIPE it sends wasm-tools fails the pipeline.
+          wasm-tools metadata show gpt-image-provider.wasm > component-metadata.txt
+          grep -F 'wit-bindgen-rust' component-metadata.txt > /dev/null
           # This provider reaches chatgpt.com through the broker's HTTP client and nothing else. Any
           # other core import is a new authority nobody reviewed.
           wasm-tools print "$core" | grep '(import ' > core-imports.txt || true
