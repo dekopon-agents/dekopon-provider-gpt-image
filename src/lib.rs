@@ -145,9 +145,9 @@ mod tests {
         );
     }
 
-    /// The manifest, pinned byte for byte. Effect, risk, and idempotency have to match the broker's
-    /// constraint sets and the gateway's catalog exactly, and a snapshot is how a change to any of
-    /// them becomes a diff a reviewer sees.
+    /// The manifest, pinned byte for byte. Effect and risk have to match the broker's constraint
+    /// sets and the gateway's catalog exactly, and a snapshot is how a change to either of them
+    /// becomes a diff a reviewer sees.
     #[test]
     fn manifest_snapshot() {
         let actual = format!(

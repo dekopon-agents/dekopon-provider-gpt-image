@@ -29,7 +29,7 @@ have been validated.
 
 ```console
 # 1. A ChatGPT credential family of its own, for the broker. Never share the gateway's file.
-dekopon auth chatgpt login --auth-file ~/.config/dekopon/chatgpt-auth.gpt-image.json
+dekopond auth chatgpt login --auth-file ~/.config/dekopon/chatgpt-auth.gpt-image.json
 chmod 0600 ~/.config/dekopon/chatgpt-auth.gpt-image.json
 
 # 2. Point the broker at it.

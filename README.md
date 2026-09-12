@@ -6,7 +6,7 @@ prompt. The bill goes to a ChatGPT subscription rather than a platform API key, 
 calls is the one Codex calls.
 
 One invocation is one `POST`, and one image. There are no retries: the route spends the account's
-image allowance and publishes nothing idempotent, so a repeat is a second image and a second charge.
+image allowance, so a repeat is a second image and a second charge.
 
 The component never sets `authorization` or `chatgpt-account-id`. The broker injects both at the
 native HTTP boundary for destinations inside its binding, where no guest can observe them, and
@@ -14,10 +14,10 @@ rejects a guest that tries to set either rather than overwriting it.
 
 ## Capabilities
 
-| Capability | Input | Effect | Risk | Idempotency |
-|---|---|---|---|---|
-| `gpt-image.generate` | `{prompt}` | external-write | Medium | non-idempotent |
-| `gpt-image.edit` | `{prompt, images}` | external-write | Medium | non-idempotent |
+| Capability | Input | Effect | Risk |
+|---|---|---|---|
+| `gpt-image.generate` | `{prompt}` | external-write | Medium |
+| `gpt-image.edit` | `{prompt, images}` | external-write | Medium |
 
 `prompt` is 1–16 KiB of UTF-8, trimmed. `images` is one to three `data:image/(png|jpeg|webp);base64,…`
 URLs, at most 8 MiB decoded each.
@@ -134,7 +134,7 @@ same ChatGPT account, independent refresh token — so neither can race the othe
 either can be revoked alone:
 
 ```console
-dekopon auth chatgpt login --auth-file ~/.config/dekopon/chatgpt-auth.gpt-image.json
+dekopond auth chatgpt login --auth-file ~/.config/dekopon/chatgpt-auth.gpt-image.json
 ```
 
 Never point the broker and the gateway at one file. The access token the login mints was observed
@@ -152,7 +152,6 @@ gpt-image.generate:            # and gpt-image.edit, identically
   provider: gpt-image
   effect: external-write
   risk: Medium
-  idempotency: non-idempotent
   credential: chatgpt-gpt-image
   constraints:
     timeoutMs: 240000
@@ -232,8 +231,8 @@ for; do not pool the credential.
 ## Building
 
 ```console
-rustup toolchain install 1.97.0 --profile minimal
-cargo install wasm-tools --version 1.236.1 --locked
+rustup toolchain install 1.98.1 --profile minimal
+cargo install wasm-tools --version 1.259.0 --locked
 ./scripts/validate.sh
 ```
 
@@ -253,16 +252,17 @@ comparing.
 
 ### The SDK pin
 
-**`TODO(release)`: re-pin `dekopon-provider-sdk` and `dekopon-provider-http` to `= "0.13.0"` from
-crates.io when dekopon 0.13.0 publishes, and the CI WIT-mirror step will resolve tag `v0.13.0`
-instead of the commit automatically.**
+`dekopon-provider-sdk` and `dekopon-provider-http` are pinned to `= "0.13.0"` from crates.io — the
+first published SDK carrying `dekopon:provider@0.3.0`, whose `provider-cli` world exports
+`run-command`, the facade this component's world includes. An exact version, never a branch: a
+`branch =` dependency resolves by fetching the ref, so deleting the branch upstream breaks every cold
+build. The CI WIT-mirror step reads `Cargo.lock` and resolves a registry source to tag `v0.13.0`.
 
-Both are pinned to a git commit, not a version, because this component's world includes
-`dekopon:provider/provider-cli@0.3.0` — the `run-command` facade — which no published SDK carries
-yet. The pin is a full 40-character SHA rather than a branch: a `branch =` dependency resolves by
-fetching the ref, so deleting the branch upstream breaks a cold build. `wit-bindgen` is pinned to
-`=0.46.0` to match what the SDK generates its own bindings with at that commit; two wit-bindgen
-runtimes in one component define `cabi_realloc` twice.
+`wit-bindgen` is pinned to `=0.62.0` to match what the SDK generates its own bindings with; two
+wit-bindgen runtimes in one component define `cabi_realloc` twice. That pin, `rust-toolchain.toml`,
+and the `wasm-tools` version in `build.sh` and `scripts/validate.sh` move in lockstep with dekopon's
+own — 1.98.1 and wasm-tools 1.259.0 at 0.13.0 — because wit-bindgen's generated code must agree with
+the wasm-tools CLI.
 
 ## Releases
 

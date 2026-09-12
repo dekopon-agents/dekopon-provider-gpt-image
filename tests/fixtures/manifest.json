@@ -8,7 +8,6 @@
       "description": "Generates one new image from a prompt and returns it as a PNG attachment",
       "effect": "external-write",
       "risk": "Medium",
-      "idempotency": "non-idempotent",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
@@ -30,7 +29,6 @@
       "description": "Remixes one to three supplied images into one new image from a prompt and returns it as a PNG attachment",
       "effect": "external-write",
       "risk": "Medium",
-      "idempotency": "non-idempotent",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {

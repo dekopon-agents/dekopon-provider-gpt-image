@@ -82,7 +82,7 @@ pub(crate) fn starts_with_png_signature(value: &str) -> bool {
         return false;
     };
     let mut decoded = [0_u8; 12];
-    for (group, characters) in prefix.chunks_exact(4).enumerate() {
+    for (group, characters) in prefix.as_chunks::<4>().0.iter().enumerate() {
         let mut packed = 0_u32;
         for character in characters {
             let Some(sextet) = sextet(*character) else {
