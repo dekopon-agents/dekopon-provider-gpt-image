@@ -5,52 +5,10 @@
 # to pass the broker's Cedar policy in `policies.cedar`; the broker never reads this file. Deleting a
 # capability here narrows what the agent can attempt; adding one cannot grant authority.
 #
-# Capability effect/risk/idempotency below match the component's manifest byte for byte
-# (tests/fixtures/manifest.json). The broker refuses to start if its constraint sets disagree with the
-# manifest, and a catalog that disagrees with either is a lie an operator would read.
-apiVersion: dekopon.dev/v1alpha1
-kind: Provider
-metadata:
-  name: gpt-image
-  labels:
-    environment: local
-spec:
-  description: GPT Image generation and editing over broker HTTP, billed to a ChatGPT subscription
-  type: openai
-  # Symbolic only. The value lives in the broker's credentials file — here, in a credential file the
-  # broker owns and refreshes — and nothing else ever sees it.
-  credentialRef: chatgpt-gpt-image
-status: Unknown
----
-apiVersion: dekopon.dev/v1alpha1
-kind: Capability
-metadata:
-  name: gpt-image.generate
-spec:
-  description: Generates one new image from a prompt and returns it as a PNG attachment
-  provider: gpt-image
-  effect: external-write
-  risk: Medium
-  idempotency: non-idempotent
-  permissions:
-    - operation: images:generate
-status: Unknown
----
-apiVersion: dekopon.dev/v1alpha1
-kind: Capability
-metadata:
-  name: gpt-image.edit
-spec:
-  description: Remixes one to three supplied images into one new image from a prompt
-  provider: gpt-image
-  effect: external-write
-  risk: Medium
-  idempotency: non-idempotent
-  permissions:
-    - operation: images:edit
-      resource: chat-assets
-status: Unknown
----
+# `Provider` and `Capability` documents were withdrawn from the catalog in dekopon 0.13.0 — a
+# retained one refuses the catalog naming the kind. Effect and risk now live in exactly two places
+# that must agree: the component's manifest (tests/fixtures/manifest.json) and broker.yaml's
+# constraint sets.
 apiVersion: dekopon.dev/v1alpha1
 kind: Agent
 metadata:

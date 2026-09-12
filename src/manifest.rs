@@ -8,7 +8,7 @@
 //! asking for a size it cannot have.
 
 use dekopon_provider_sdk::{
-    EffectKind, Idempotency, ProviderApiVersion, ProviderCapability, ProviderManifest, RiskLevel,
+    EffectKind, ProviderApiVersion, ProviderCapability, ProviderManifest, RiskLevel,
 };
 use serde_json::{Value, json};
 
@@ -44,7 +44,6 @@ pub(crate) fn manifest() -> ProviderManifest {
                         .to_owned(),
                 effect: EffectKind::ExternalWrite,
                 risk: RiskLevel::Medium,
-                idempotency: Idempotency::NonIdempotent,
                 input_schema: generate_schema(),
             },
             ProviderCapability {
@@ -55,7 +54,6 @@ pub(crate) fn manifest() -> ProviderManifest {
                         .to_owned(),
                 effect: EffectKind::ExternalWrite,
                 risk: RiskLevel::Medium,
-                idempotency: Idempotency::NonIdempotent,
                 input_schema: edit_schema(),
             },
         ],
@@ -115,7 +113,7 @@ fn prompt_property() -> Value {
 
 #[cfg(test)]
 mod tests {
-    use dekopon_provider_sdk::{EffectKind, Idempotency, RiskLevel};
+    use dekopon_provider_sdk::{EffectKind, RiskLevel};
 
     use super::manifest;
     use crate::{COMMAND_WORD, EDIT, GENERATE};
@@ -130,9 +128,12 @@ mod tests {
     }
 
     /// Both capabilities spend the account's quota and create content, so repeating one creates
-    /// more. The broker refuses to start when a constraint set disagrees with any of these three.
+    /// more. The broker refuses to start when a constraint set disagrees with either of these two.
+    /// The third classification, `idempotency`, was removed end to end in dekopon 0.13.0 — the SDK
+    /// reads and drops it for one release so pre-0.13.0 components keep loading, but a manifest
+    /// built today must not emit it.
     #[test]
-    fn both_capabilities_are_medium_risk_non_idempotent_external_writes() {
+    fn both_capabilities_are_medium_risk_external_writes() {
         let manifest = manifest();
         assert_eq!(manifest.id.as_str(), "gpt-image");
         assert_eq!(manifest.command_words, vec!["image".to_owned()]);
@@ -140,7 +141,6 @@ mod tests {
         for capability in &manifest.capabilities {
             assert_eq!(capability.effect, EffectKind::ExternalWrite);
             assert_eq!(capability.risk, RiskLevel::Medium);
-            assert_eq!(capability.idempotency, Idempotency::NonIdempotent);
             assert!(
                 capability.id.as_str().starts_with("gpt-image."),
                 "{}",

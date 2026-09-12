@@ -6,7 +6,7 @@
 # Hygiene, all checked at startup and all fatal:
 #   chmod 0600 broker.yaml policies.cedar
 #   chmod 0600 broker-credentials.yaml        # 0o077 — group/world *readable* is refused too
-#   chmod 0700 ~/.local/run/dekopon ~/.local/state/dekopon
+#   chmod 0700 ~/.local/run/dekopon
 #   chmod 0700 ~/.config/dekopon && chmod 0600 ~/.config/dekopon/chatgpt-auth.gpt-image.json
 # Every relative path below resolves against this file's own directory, so the example runs from a
 # checkout without editing repository paths. The absolute `/home/xavier/...` paths are runtime state
@@ -14,7 +14,6 @@
 apiVersion: dekopon.dev/brokerd/v1alpha1
 
 socketPath: /home/xavier/.local/run/dekopon/broker.sock
-auditPath: /home/xavier/.local/state/dekopon/audit.jsonl
 
 brokerPrincipal: local-broker
 policyRevision: chat-image-studio-2026-09
@@ -75,8 +74,10 @@ identityMappings:
 
 constraintSets:
   # One entry per capability policy may reach. A capability with no entry is denied
-  # `unconstrained-capability` before Cedar is consulted. Effect, risk, and idempotency must match
-  # the component's manifest byte for byte or the broker refuses to start.
+  # `unconstrained-capability` before Cedar is consulted. Effect and risk must match the
+  # component's manifest byte for byte or the broker refuses to start. (`idempotency` was removed
+  # end to end in dekopon 0.13.0; constraint sets decode with `deny_unknown_fields`, so a retained
+  # line here is a startup refusal.)
   #
   # `timeoutMs: 240000` is sized for generation taking tens of seconds and occasionally minutes: the
   # route sets no timeout of its own. `maxRequests: 1` is the whole HTTP budget — one POST per
@@ -85,7 +86,6 @@ constraintSets:
     provider: gpt-image
     effect: external-write
     risk: Medium
-    idempotency: non-idempotent
     credential: chatgpt-gpt-image
     constraints:
       timeoutMs: 240000
@@ -101,7 +101,6 @@ constraintSets:
     provider: gpt-image
     effect: external-write
     risk: Medium
-    idempotency: non-idempotent
     credential: chatgpt-gpt-image
     constraints:
       timeoutMs: 240000
@@ -114,7 +113,9 @@ constraintSets:
         maxResponseBytes: 12582912
         allowPlaintextLoopback: false
 
-# Optional. Uncomment to export broker spans; the ingest token is read from
+# Optional, and the only way to keep audit past a restart: since 0.13.0 the audit record is the
+# `broker.decision`/`broker.execution` log record, on stdout as JSON always and as an OTLP log record
+# when `telemetry` names a receiver. There is no on-disk audit sink. The ingest token is read from
 # OTEL_EXPORTER_OTLP_HEADERS by the SDK and never appears in this file. `broker.credential.refresh`
 # with `outcome=rotated` is the span that proves the broker is refreshing its own ChatGPT token.
 # telemetry:

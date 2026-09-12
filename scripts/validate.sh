@@ -9,8 +9,8 @@ package=dekopon-gpt-image-provider
 component=gpt-image-provider.wasm
 checksum=gpt-image-provider.wasm.sha256
 core=target/wasm32-unknown-unknown/release/dekopon_gpt_image_provider.wasm
-wasm_tools_version=1.236.1
-msrv=1.89.0
+wasm_tools_version=1.259.0
+msrv=1.98.1
 
 command -v jq >/dev/null 2>&1 || {
   echo "error: jq is required" >&2

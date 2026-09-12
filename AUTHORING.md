@@ -72,7 +72,7 @@ Observed friction and fixes:
 ## Validation record
 
 ```console
-cargo +1.89.0 check --locked --all-targets        # MSRV
+cargo +1.98.1 check --locked --all-targets        # MSRV
 cargo fmt --all -- --check
 cargo test --locked                              # 52 passed
 cargo clippy --all-targets --locked -- -D warnings
