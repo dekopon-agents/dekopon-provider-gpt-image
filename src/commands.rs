@@ -80,6 +80,7 @@ fn dispatch(
         Action::Generate(generate) => Ok(CommandInvocation {
             capability: GENERATE.parse().expect("static capability ID"),
             input: json!({"prompt": prompt(generate.prompt, stdin, "generate")?}),
+            secret_use: None,
         }),
         Action::Edit(edit) => Ok(CommandInvocation {
             capability: EDIT.parse().expect("static capability ID"),
@@ -87,6 +88,7 @@ fn dispatch(
                 "prompt": prompt(edit.prompt, stdin, "edit")?,
                 "images": edit.images,
             }),
+            secret_use: None,
         }),
     }
 }

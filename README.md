@@ -252,16 +252,18 @@ comparing.
 
 ### The SDK pin
 
-`dekopon-provider-sdk` and `dekopon-provider-http` are pinned to `= "0.13.0"` from crates.io — the
-first published SDK carrying `dekopon:provider@0.3.0`, whose `provider-cli` world exports
-`run-command`, the facade this component's world includes. An exact version, never a branch: a
-`branch =` dependency resolves by fetching the ref, so deleting the branch upstream breaks every cold
-build. The CI WIT-mirror step reads `Cargo.lock` and resolves a registry source to tag `v0.13.0`.
+`dekopon-provider-sdk` and `dekopon-provider-http` are pinned to `= "0.15.0"` from crates.io — 0.13.0
+was the first published SDK carrying `dekopon:provider@0.3.0`, whose `provider-cli` world exports
+`run-command`, the facade this component's world includes; the WIT package text is unchanged since,
+so the pin has moved forward without a second round of fleet churn. An exact version, never a
+branch: a `branch =` dependency resolves by fetching the ref, so deleting the branch upstream breaks
+every cold build. The CI WIT-mirror step reads `Cargo.lock` and resolves a registry source to tag
+`v0.15.0`.
 
 `wit-bindgen` is pinned to `=0.62.0` to match what the SDK generates its own bindings with; two
 wit-bindgen runtimes in one component define `cabi_realloc` twice. That pin, `rust-toolchain.toml`,
 and the `wasm-tools` version in `build.sh` and `scripts/validate.sh` move in lockstep with dekopon's
-own — 1.98.1 and wasm-tools 1.259.0 at 0.13.0 — because wit-bindgen's generated code must agree with
+own — 1.98.1 and wasm-tools 1.259.0 at 0.15.0 — because wit-bindgen's generated code must agree with
 the wasm-tools CLI.
 
 ## Releases
