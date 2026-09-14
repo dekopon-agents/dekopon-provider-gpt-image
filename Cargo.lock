@@ -83,7 +83,7 @@ dependencies = [
 
 [[package]]
 name = "dekopon-gpt-image-provider"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dekopon-provider-http",
  "dekopon-provider-sdk",
