@@ -113,17 +113,33 @@ read, so anything surprising is dropped rather than forwarded into a prompt.
 
 ## Errors
 
-No upstream body, message, or host detail is ever echoed. Seven codes:
+A refused call quotes upstream's own reason, and nothing else from upstream ever reaches a message.
+The quotation is the error envelope's `code` (or its `type`) and its `message`, control characters
+turned into spaces and the whole thing cut to 240 characters:
+
+```
+upstream-rejected: the image route refused the request with HTTP 400 (moderation_blocked: Your request was rejected as a result of our safety system.); revise the request
+```
+
+That envelope is a *response* body from an authorized endpoint, so there is nothing in one to leak:
+no request header, no injected credential, no request body, no data URL. A body that is not that
+envelope — HTML from a gateway, an empty body, anything past 64 KiB — leaves the sentence as it was,
+the status and the advice with no quotation. The text is quoted, never interpreted; the code is what
+anything should branch on. Seven of them:
 
 | Code | When |
 |---|---|
 | `invalid-input` | the input fails the closed contract; an unexpanded `chat-asset:<N>`; a request too large for the authorized size |
 | `upstream-unauthorized` | 401 or 403 — "the operator must re-login the gpt-image credential" |
 | `upstream-quota` | 429, with the refusal type, `x-codex-active-limit`, and `retry-after` when present |
-| `upstream-rejected` | any other 4xx, with the status |
-| `upstream-failure` | 5xx, a timeout, a transport failure, or a broker denial |
+| `upstream-rejected` | any other 4xx, with the status and upstream's bounded code and message |
+| `upstream-failure` | 5xx, with the status and upstream's bounded code and message; or a timeout, a transport failure, or a broker denial |
 | `response-invalid` | not JSON, no `data[0].b64_json`, not standard base64, not a PNG, or an `output_format` that disagrees with the bytes |
 | `response-too-large` | the success envelope would exceed 12 MiB; refused before it is assembled |
+
+401, 403, and 429 keep sentences of their own: re-login and quota are operator facts, and the 429
+message already carries the refusal type, `x-codex-active-limit`, and `retry-after` as validated
+tokens rather than prose.
 
 ## Credential
 
