@@ -38,7 +38,7 @@ $EDITOR broker-credentials.yaml          # set authFile to the absolute path abo
 chmod 0600 broker-credentials.yaml broker.yaml policies.cedar dekopond.yaml
 
 # 3. The component the broker loads.
-(cd ../.. && ./build.sh)
+(cd ../.. && ../provider-workflows/build.sh)
 
 # 4. Both halves.
 dekopon-brokerd --config broker.yaml
