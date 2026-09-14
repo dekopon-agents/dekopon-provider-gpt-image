@@ -249,14 +249,18 @@ for; do not pool the credential.
 ```console
 rustup toolchain install 1.98.1 --profile minimal
 cargo install wasm-tools --version 1.259.0 --locked
-./scripts/validate.sh
+git clone https://github.com/dekopon-agents/provider-workflows ../provider-workflows
+../provider-workflows/build.sh
 ```
 
-`scripts/validate.sh` is the whole gate — MSRV, fmt, clippy, tests, the wasm target, the WIT mirror
-against the resolved sources, the ambient-dependency and `unsafe` rejectors, and then the component's
-imports and exports — and it is what CI and the release workflow run too.
+The gate is CI, not a script in this repository. `.github/workflows/ci.yml` calls
+`dekopon-agents/provider-workflows`, which runs `cargo fmt --all --check`, `cargo deny
+--all-features check bans licenses sources advisories`, clippy for the host and for wasm32, the
+WIT-mirror comparison against the resolved SDK crates, the reproducible build, the component's
+imports and exports, a raw `wasmtime` smoke, `cargo test` and the CycloneDX SBOM as separate timed
+steps. Those cargo commands are the same ones to run locally.
 
-`build.sh` is a self-contained port of dekopon's `examples/providers/build-component.sh` and keeps
+`../provider-workflows/build.sh` is a port of dekopon's `examples/providers/build-component.sh` and keeps
 every mechanism that made the in-tree component reproducible: a `rustc` proxy that normalizes
 `-Cmetadata` to the fixed `dekopon-provider-repro-v1` salt, `--remap-path-prefix` for the source
 root, the Cargo home and the toolchain sysroot, `-Ccodegen-units=1`, and a final scan that fails the
@@ -278,7 +282,7 @@ every cold build. The CI WIT-mirror step reads `Cargo.lock` and resolves a regis
 
 `wit-bindgen` is pinned to `=0.62.0` to match what the SDK generates its own bindings with; two
 wit-bindgen runtimes in one component define `cabi_realloc` twice. That pin, `rust-toolchain.toml`,
-and the `wasm-tools` version in `build.sh` and `scripts/validate.sh` move in lockstep with dekopon's
+and the `wasm-tools` version pinned in `dekopon-agents/provider-workflows` move in lockstep with dekopon's
 own — 1.98.1 and wasm-tools 1.259.0 at 0.15.0 — because wit-bindgen's generated code must agree with
 the wasm-tools CLI.
 

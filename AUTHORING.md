@@ -3,6 +3,12 @@
 The chronological build record for this provider. It records only work that happened; release results
 will be appended after a release exists.
 
+Entries before 2026-09-14 name `build.sh` and `scripts/validate.sh` in this repository. Both are
+gone: the build harness is `../provider-workflows/build.sh` from
+[dekopon-agents/provider-workflows](https://github.com/dekopon-agents/provider-workflows), and the
+gate is that repository's `ci.yml`, which this repository calls. The commands below are what was run
+at the time, not what to run now.
+
 ## 2026-09-10 — contract, and a contract change
 
 1. Confirmed the target directory did not exist, created the repository with no remote, and left the
