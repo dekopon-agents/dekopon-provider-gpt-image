@@ -39,7 +39,7 @@ struct Image {
 enum Action {
     /// Generate one new image from a prompt
     Generate(Generate),
-    /// Remix one to three images with a prompt
+    /// Remix one to five images with a prompt
     Edit(Edit),
 }
 
@@ -52,7 +52,7 @@ struct Generate {
 
 #[derive(Args)]
 struct Edit {
-    /// A reference image: chat-asset:<N>, or a data:image/...;base64,... URL. Repeatable, up to 3
+    /// A reference image: chat-asset:<N>. Repeatable, up to 5; PNG, JPEG or WebP
     #[arg(long = "image", value_name = "REF", required = true)]
     images: Vec<String>,
     /// How to change the images; the service picks quality, size, and format. `-` reads the piped value
@@ -68,8 +68,8 @@ pub(crate) fn run(argv: &[String], stdin: Option<&str>) -> Result<CommandRun, Pr
 /// Turns clap's matches into the proposal for the selected subcommand.
 ///
 /// Runs only after clap accepted the argv, so what is left to decide is what clap cannot know:
-/// whether anything was piped. Every semantic bound — the prompt length, the image count, the data
-/// URL shape — is checked once, in `invoke`, against the input a direct call would send too.
+/// whether anything was piped. Reference syntax is checked before proposing as well as in invoke;
+/// the pure facade never resolves references or calls a host import.
 fn dispatch(
     matches: clap::ArgMatches,
     stdin: Option<&str>,
@@ -82,14 +82,17 @@ fn dispatch(
             input: json!({"prompt": prompt(generate.prompt, stdin, "generate")?}),
             secret_use: None,
         }),
-        Action::Edit(edit) => Ok(CommandInvocation {
-            capability: EDIT.parse().expect("static capability ID"),
-            input: json!({
-                "prompt": prompt(edit.prompt, stdin, "edit")?,
-                "images": edit.images,
-            }),
-            secret_use: None,
-        }),
+        Action::Edit(edit) => {
+            crate::input::validate_images(&edit.images)?;
+            Ok(CommandInvocation {
+                capability: EDIT.parse().expect("static capability ID"),
+                input: json!({
+                    "prompt": prompt(edit.prompt, stdin, "edit")?,
+                    "images": edit.images,
+                }),
+                secret_use: None,
+            })
+        }
     }
 }
 
@@ -252,7 +255,7 @@ mod tests {
                 "--image",
                 "chat-asset:2",
                 "--image",
-                "data:image/png;base64,iVBORw0KGgo=",
+                "chat-asset:3",
                 "--prompt",
                 "repaint as a watercolour",
             ],
@@ -263,9 +266,25 @@ mod tests {
             invocation.input,
             json!({
                 "prompt": "repaint as a watercolour",
-                "images": ["chat-asset:2", "data:image/png;base64,iVBORw0KGgo="]
+                "images": ["chat-asset:2", "chat-asset:3"]
             })
         );
+    }
+
+    #[test]
+    fn legacy_data_urls_are_never_proposed() {
+        let error = run(
+            &argv(&[
+                "edit",
+                "--image",
+                "data:image/png;base64,iVBORw0KGgo=",
+                "--prompt",
+                "remix",
+            ]),
+            None,
+        )
+        .unwrap_err();
+        assert!(error.message().contains("chat-asset:<N>"));
     }
 
     #[test]

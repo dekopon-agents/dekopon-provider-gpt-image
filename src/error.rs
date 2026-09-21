@@ -1,6 +1,6 @@
 //! The provider's closed error taxonomy.
 //!
-//! Seven codes, a sentence written here for each, and one bounded quotation from upstream: a
+//! HTTP/response codes and one bounded quotation from upstream: a
 //! refused call carries the upstream error envelope's own `code` (or `type`) and `message`, control
 //! characters stripped and cut to 240 characters. A 400 whose reason is invisible is a call nobody
 //! can fix, and the response body of an authorized endpoint is not a secret.
@@ -13,7 +13,7 @@
 use dekopon_provider_http::{HttpError, HttpErrorCode};
 use dekopon_provider_sdk::ProviderError;
 
-/// The caller's input, or an expansion the route did not perform, is wrong.
+/// The caller's metadata or asset reference is invalid.
 pub(crate) const INVALID_INPUT: &str = "invalid-input";
 /// The injected credential was refused upstream.
 pub(crate) const UPSTREAM_UNAUTHORIZED: &str = "upstream-unauthorized";
@@ -25,7 +25,7 @@ pub(crate) const UPSTREAM_REJECTED: &str = "upstream-rejected";
 pub(crate) const UPSTREAM_FAILURE: &str = "upstream-failure";
 /// Upstream answered with something that is not a usable image response.
 pub(crate) const RESPONSE_INVALID: &str = "response-invalid";
-/// A usable response that does not fit the authorized result size.
+/// A response exceeding the decoded asset size or HTTP response allowance.
 pub(crate) const RESPONSE_TOO_LARGE: &str = "response-too-large";
 
 /// Longest quotation of an upstream error envelope carried in a message, in characters.
@@ -97,13 +97,12 @@ pub(crate) fn response_invalid(detail: &'static str) -> ProviderError {
     )
 }
 
-/// The success envelope would exceed the ceiling this component fails closed at.
-pub(crate) fn response_too_large(envelope: usize, ceiling: usize) -> ProviderError {
+/// The decoded PNG would exceed the asset ceiling.
+pub(crate) fn response_too_large(bytes: usize, ceiling: usize) -> ProviderError {
     ProviderError::new(
         RESPONSE_TOO_LARGE,
         format!(
-            "the image is too large to return: the result would be {envelope} bytes and the limit \
-             is {ceiling}; ask for a smaller size"
+            "the decoded image is {bytes} bytes and the asset limit is {ceiling}; ask for a smaller size"
         ),
     )
 }

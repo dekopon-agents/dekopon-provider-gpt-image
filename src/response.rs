@@ -1,36 +1,15 @@
-//! Turning one upstream response into one capability result, without ever holding the image twice.
-//!
-//! This module is where the 64 MiB store is either respected or not. An 8 MiB PNG arrives as about
-//! 10.7 MiB of base64 inside a JSON body, and the result carries that same base64 back out. The
-//! discipline, in order:
-//!
-//! 1. the body is moved into a `String` with [`String::from_utf8`], which reuses the buffer the
-//!    bytes arrived in rather than copying them;
-//! 2. it is parsed with **borrowed** strings, so the 11 MiB value in `data[0].b64_json` is a slice
-//!    of that buffer and not a second copy — base64 contains no character JSON has to escape, so
-//!    borrowing always succeeds on a well-formed response, and an escaped one is refused;
-//! 3. the PNG signature is checked by decoding the first sixteen characters, twelve bytes, and the
-//!    decoded size is computed from the base64 length. Nothing decodes the blob;
-//! 4. the success envelope is measured as the serialized skeleton plus the blob's own length —
-//!    exact, because the alphabet scan proved the blob needs no escaping — and compared against a
-//!    hardcoded 12 MiB before anything is assembled;
-//! 5. the buffer is then *trimmed in place* to the base64 itself with `drain` and `truncate`, which
-//!    move bytes within the existing allocation, and that same allocation is what the result
-//!    carries. One blob, one allocation, from the host's write to the guest's answer.
-//!
-//! The one copy left is serde's: `Provider::invoke` returns a `serde_json::Value` and the SDK
-//! serializes it, so the final envelope is built in a second buffer the guest does not own. That is
-//! the floor at this SDK revision, and `peak_allocation` in `lib.rs` measures it.
+//! Borrow the upstream base64, validate its PNG signature and decoded length, and write that
+//! slice directly to a broker-owned base64 asset. The ordinary result contains metadata only.
 
 use dekopon_provider_http::{Header, Response};
-use dekopon_provider_sdk::{ComponentResponse, ProviderError};
+use dekopon_provider_sdk::ProviderError;
 use serde::Deserialize;
 use serde_json::{Map, Number, Value, json};
 
 use crate::{b64, error, wire};
 
-/// The ceiling this component fails closed at, matching the deployment's `maxOutputBytes`.
-pub(crate) const MAX_SUCCESS_ENVELOPE_BYTES: usize = 12 * 1024 * 1024;
+/// The asset host's decoded per-image ceiling, not a JSON-envelope bound.
+const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
 /// Largest error body parsed to classify a refusal. Beyond this the status alone classifies it.
 const MAX_PARSED_ERROR_BODY: usize = 64 * 1024;
 /// Longest echoed metadata token copied into the result.
@@ -108,7 +87,10 @@ struct Echoed {
 }
 
 /// Projects one response into the capability result, or into this provider's taxonomy.
-pub(crate) fn project(response: Response) -> Result<Value, ProviderError> {
+pub(crate) fn project(
+    response: Response,
+    attach_png: impl FnOnce(&[u8]) -> Result<(), ProviderError>,
+) -> Result<Value, ProviderError> {
     if !(200..=299).contains(&response.status) {
         return Err(status_error(&response));
     }
@@ -117,12 +99,11 @@ pub(crate) fn project(response: Response) -> Result<Value, ProviderError> {
         REQUEST_ID_HEADER,
         MAX_IDENTIFIER_CHARACTERS,
     );
-    let mut text = String::from_utf8(response.body)
+    let text = String::from_utf8(response.body)
         .map_err(|_| error::response_invalid("the body is not UTF-8"))?;
 
-    // The borrow of `text` lives exactly as long as this block: it yields owned metadata and the
-    // byte window the image occupies, after which the buffer can be rewritten in place.
-    let (start, length, echoed) = {
+    // Keep the borrowed payload in the response allocation through the final write.
+    let (payload, echoed) = {
         let upstream: Upstream<'_> = serde_json::from_str(&text)
             .map_err(|_| error::response_invalid("the body is not the documented JSON shape"))?;
         let Some(datum) = upstream.data.into_iter().next() else {
@@ -134,12 +115,6 @@ pub(crate) fn project(response: Response) -> Result<Value, ProviderError> {
         if payload.len() < MIN_PAYLOAD_CHARACTERS {
             return Err(error::response_invalid("data[0].b64_json is too short"));
         }
-        if payload.len() > MAX_SUCCESS_ENVELOPE_BYTES {
-            return Err(error::response_too_large(
-                payload.len(),
-                MAX_SUCCESS_ENVELOPE_BYTES,
-            ));
-        }
         if !b64::is_standard(payload) {
             return Err(error::response_invalid(
                 "data[0].b64_json is not standard base64",
@@ -150,6 +125,9 @@ pub(crate) fn project(response: Response) -> Result<Value, ProviderError> {
                 "data[0].b64_json is not a whole number of base64 groups",
             ));
         };
+        if bytes > MAX_IMAGE_BYTES {
+            return Err(error::response_too_large(bytes, MAX_IMAGE_BYTES));
+        }
         if !b64::starts_with_png_signature(payload) {
             return Err(error::response_invalid("the image is not a PNG"));
         }
@@ -162,8 +140,6 @@ pub(crate) fn project(response: Response) -> Result<Value, ProviderError> {
                 "output_format disagrees with the image bytes",
             ));
         }
-        let start = offset_of(&text, payload)
-            .ok_or_else(|| error::response_invalid("the image could not be located in the body"))?;
         let echoed = Echoed {
             generation_id: owned_token(datum.generation_id, MAX_IDENTIFIER_CHARACTERS),
             quality: owned_token(upstream.quality, MAX_METADATA_CHARACTERS),
@@ -174,35 +150,14 @@ pub(crate) fn project(response: Response) -> Result<Value, ProviderError> {
             usage: upstream.usage,
             bytes,
         };
-        (start, payload.len(), echoed)
+        (payload, echoed)
     };
 
-    let mut output = skeleton(&echoed, request_id);
-    let envelope = envelope_len(&output)? + length;
-    if envelope > MAX_SUCCESS_ENVELOPE_BYTES {
-        return Err(error::response_too_large(
-            envelope,
-            MAX_SUCCESS_ENVELOPE_BYTES,
-        ));
-    }
-
-    // The buffer the body arrived in becomes the base64 itself: `drain` moves the image to the
-    // front of the existing allocation and `truncate` drops what followed it. No second copy of the
-    // blob is ever live, and the result owns the original allocation.
-    text.drain(..start);
-    text.truncate(length);
-    let Some(slot) = output
-        .get_mut("attachments")
-        .and_then(|attachments| attachments.get_mut(0))
-        .and_then(|attachment| attachment.get_mut("base64"))
-    else {
-        return Err(error::response_invalid("the result could not be assembled"));
-    };
-    *slot = Value::String(text);
-    Ok(output)
+    attach_png(payload.as_bytes())?;
+    Ok(skeleton(&echoed, request_id))
 }
 
-/// The result with an empty `base64`, so its envelope can be measured before the blob is moved in.
+/// The bounded application metadata, with no asset bytes.
 fn skeleton(echoed: &Echoed, request_id: Option<String>) -> Value {
     let mut image = Map::new();
     if let Some(generation_id) = &echoed.generation_id {
@@ -224,10 +179,6 @@ fn skeleton(echoed: &Echoed, request_id: Option<String>) -> Value {
     );
 
     let mut object = Map::new();
-    object.insert(
-        "attachments".to_owned(),
-        json!([{"mediaType": "image/png", "base64": ""}]),
-    );
     object.insert("image".to_owned(), Value::Object(image));
     object.insert(
         "model".to_owned(),
@@ -256,32 +207,6 @@ fn usage(usage: Option<Usage>) -> Option<Map<String, Value>> {
         }
     }
     (!object.is_empty()).then_some(object)
-}
-
-/// The serialized length of the complete SDK success envelope around `output`.
-///
-/// Cloning is free of the blob: this is only ever called on the skeleton, whose `base64` is empty,
-/// and the image's own length is added to the result. Measuring the real envelope instead would
-/// mean serializing eleven megabytes twice to learn a number that is already known.
-fn envelope_len(output: &Value) -> Result<usize, ProviderError> {
-    serde_json::to_vec(&ComponentResponse::Succeeded {
-        output: output.clone(),
-    })
-    .map(|bytes| bytes.len())
-    .map_err(|_| error::response_invalid("the result could not be serialized"))
-}
-
-/// The byte offset of `payload` inside `text`, proven by comparing the window to the slice.
-///
-/// Borrowed deserialization means `payload` points into `text`, and this is the checked way to say
-/// so without `unsafe`: subtract the addresses, bound the window, and confirm the bytes match.
-fn offset_of(text: &str, payload: &str) -> Option<usize> {
-    let start = (payload.as_ptr() as usize).checked_sub(text.as_ptr() as usize)?;
-    let end = start.checked_add(payload.len())?;
-    if text.as_bytes().get(start..end)? != payload.as_bytes() {
-        return None;
-    }
-    Some(start)
 }
 
 /// Classifies a non-success status.
@@ -415,8 +340,17 @@ mod tests {
     use dekopon_provider_sdk::{ComponentFailure, ComponentResponse};
     use serde_json::{Value, json};
 
-    use super::{MAX_SUCCESS_ENVELOPE_BYTES, envelope_len, project, token};
-    use crate::b64::tests::{encode, png_payload};
+    use super::{MAX_IMAGE_BYTES, token};
+
+    fn project(response: Response) -> Result<Value, dekopon_provider_sdk::ProviderError> {
+        super::project(response, |bytes| {
+            assert!(crate::b64::starts_with_png_signature(
+                str::from_utf8(bytes).unwrap()
+            ));
+            Ok(())
+        })
+    }
+    use crate::b64::tests::encode;
     use crate::error::{
         RESPONSE_INVALID, RESPONSE_TOO_LARGE, UPSTREAM_FAILURE, UPSTREAM_QUOTA, UPSTREAM_REJECTED,
         UPSTREAM_UNAUTHORIZED,
@@ -473,7 +407,6 @@ mod tests {
         assert_eq!(
             output,
             json!({
-                "attachments": [{"mediaType": "image/png", "base64": pixel()}],
                 "image": {
                     "generationId": "img_01JQ8Z7K3M4N5P6Q7R8S9T0V1W",
                     "bytes": 69,
@@ -500,14 +433,13 @@ mod tests {
     }
 
     /// Everything optional is optional: no `generationId`, no echoed choices, no usage, no header.
-    /// `bytes`, `outputFormat`, `model`, and the attachment are the result's floor.
+    /// `bytes`, `outputFormat`, and `model` are the result's floor; attachment is out of band.
     #[test]
     fn a_minimal_response_omits_what_upstream_did_not_say() {
         let output = project(ok(MINIMAL, Vec::new())).expect("a usable response");
         assert_eq!(
             output,
             json!({
-                "attachments": [{"mediaType": "image/png", "base64": pixel()}],
                 "image": {"bytes": 69, "outputFormat": "png"},
                 "model": "gpt-image-2"
             })
@@ -533,13 +465,7 @@ mod tests {
         );
         let output = project(ok(&body, Vec::new())).expect("a usable response");
         assert_eq!(output["image"]["generationId"], "first");
-        assert_eq!(
-            output["attachments"]
-                .as_array()
-                .expect("one attachment")
-                .len(),
-            1
-        );
+        assert!(output.get("attachments").is_none());
     }
 
     #[test]
@@ -578,7 +504,7 @@ mod tests {
             (
                 // `\u0069` is a JSON escape for the `i` the payload starts with. serde_json has to
                 // unescape it, so it cannot be borrowed, so the whole parse fails — which is the
-                // correct outcome: the trimming path needs the blob to be a slice of the buffer,
+                // correct outcome: the writer path needs the blob to be a slice of the buffer,
                 // and base64 never contains an escape in the first place.
                 format!(r#"{{"data":[{{"b64_json":"\u0069{}"}}]}}"#, &pixel()[1..]),
                 "documented JSON shape",
@@ -604,62 +530,52 @@ mod tests {
         assert!(error.message().contains("not UTF-8"));
     }
 
-    /// The measured envelope is the skeleton plus the blob's own length, exactly — which holds only
-    /// because the alphabet scan proved the blob needs no JSON escaping.
     #[test]
-    fn the_envelope_measurement_is_exact_rather_than_an_estimate() {
-        let output = project(ok(GENERATE, request_id_header())).expect("a usable response");
-        let actual = serde_json::to_vec(&ComponentResponse::Succeeded {
-            output: output.clone(),
-        })
-        .expect("serializes")
-        .len();
-
-        let mut skeleton = output.clone();
-        let blob = skeleton["attachments"][0]["base64"]
-            .as_str()
-            .expect("base64")
-            .len();
-        skeleton["attachments"][0]["base64"] = Value::String(String::new());
-        assert_eq!(envelope_len(&skeleton).expect("measurable") + blob, actual);
+    fn decoded_image_limit_is_eight_mib_not_an_envelope_limit() {
+        for bytes in [MAX_IMAGE_BYTES, MAX_IMAGE_BYTES + 1] {
+            let mut raw = vec![0; bytes];
+            raw[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+            let payload = encode(&raw);
+            let body = format!(r#"{{"data":[{{"b64_json":"{payload}"}}]}}"#);
+            let mut calls = 0;
+            let result = super::project(ok(&body, Vec::new()), |_| {
+                calls += 1;
+                Ok(())
+            });
+            assert_eq!(calls, usize::from(bytes == MAX_IMAGE_BYTES));
+            if bytes == MAX_IMAGE_BYTES {
+                let output = result.unwrap();
+                assert_eq!(output["image"]["bytes"], bytes);
+                assert!(serde_json::to_vec(&output).unwrap().len() < 1024);
+            } else {
+                assert_eq!(result.unwrap_err().code(), RESPONSE_TOO_LARGE);
+            }
+        }
     }
 
-    /// Fail closed rather than overshoot: the ceiling is checked before the result is assembled, so
-    /// the refusal costs nothing beyond the response already in hand.
     #[test]
-    fn an_image_past_the_ceiling_is_refused_before_assembly() {
-        let oversize = "A".repeat(MAX_SUCCESS_ENVELOPE_BYTES + 4);
-        let body = format!(r#"{{"created":1,"data":[{{"b64_json":"{oversize}"}}]}}"#);
-        let error = project(ok(&body, Vec::new())).expect_err("over the ceiling");
-        assert_eq!(error.code(), RESPONSE_TOO_LARGE);
-
-        // Just inside the blob bound but past it once the envelope is counted: the arithmetic,
-        // not the blob alone, is what decides.
-        let payload = png_payload(MAX_SUCCESS_ENVELOPE_BYTES - 4);
-        assert!(payload.len() < MAX_SUCCESS_ENVELOPE_BYTES);
-        let body = format!(r#"{{"created":1,"data":[{{"b64_json":"{payload}"}}]}}"#);
-        let error = project(ok(&body, Vec::new())).expect_err("the envelope is over");
-        assert_eq!(error.code(), RESPONSE_TOO_LARGE);
-        assert!(error.message().contains("12582912"));
-    }
-
-    /// The result carries the allocation the body arrived in. Equal addresses prove the blob was
-    /// moved to the front of that buffer and never copied.
-    #[test]
-    fn the_image_is_never_copied_out_of_the_response_buffer() {
+    fn the_writer_borrows_the_response_buffer_without_copying() {
         let body = GENERATE.as_bytes().to_vec();
-        let arrived = body.as_ptr() as usize;
-        let output = project(Response {
-            status: 200,
-            headers: Vec::new(),
-            body,
-        })
-        .expect("a usable response");
-        let returned = output["attachments"][0]["base64"]
-            .as_str()
-            .expect("base64")
-            .as_ptr() as usize;
-        assert_eq!(returned, arrived);
+        let start = body.as_ptr() as usize;
+        let end = start + body.len();
+        let mut calls = 0;
+        let output = super::project(
+            Response {
+                status: 200,
+                headers: vec![],
+                body,
+            },
+            |bytes| {
+                calls += 1;
+                assert!((start..end).contains(&(bytes.as_ptr() as usize)));
+                assert!(bytes.as_ptr() as usize + bytes.len() <= end);
+                assert_eq!(bytes, pixel().as_bytes());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert!(output.get("attachments").is_none());
     }
 
     #[test]
