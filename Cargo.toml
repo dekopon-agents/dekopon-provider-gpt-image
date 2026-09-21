@@ -2,7 +2,7 @@
 
 [package]
 name = "dekopon-gpt-image-provider"
-version = "0.2.1"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.98.1"
 license = "MIT OR Apache-2.0"
@@ -19,8 +19,8 @@ crate-type = ["cdylib"]
 # provider rotted. 0.13.0 is the first published SDK carrying `dekopon:provider@0.3.0`, whose
 # `provider-cli` world exports `run-command` — the facade that renders `--help` and usage errors in
 # the guest — so this provider's world is expressible against a release rather than a commit.
-dekopon-provider-http = "=0.15.0"
-dekopon-provider-sdk = { version = "=0.15.0", features = ["clap"] }
+dekopon-provider-http = "=0.18.0"
+dekopon-provider-sdk = { version = "=0.18.0", features = ["clap"] }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 # 0.62.0, matching dekopon 0.13.0's own workspace pin: it is the version the SDK and the HTTP

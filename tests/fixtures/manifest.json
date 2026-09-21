@@ -1,11 +1,11 @@
 {
   "apiVersion": "dekopon.dev/provider/v1alpha1",
   "id": "gpt-image",
-  "description": "Generates and edits images with OpenAI's GPT Image models, billed to a ChatGPT subscription, and returns one PNG per invocation as a result attachment",
+  "description": "Generates and edits images with OpenAI's GPT Image models, billed to a ChatGPT subscription, and attaches one PNG asset per invocation without sending it",
   "capabilities": [
     {
       "id": "gpt-image.generate",
-      "description": "Generates one new image from a prompt and returns it as a PNG attachment",
+      "description": "Generates one new image from a prompt and attaches a PNG asset without sending it",
       "effect": "external-write",
       "risk": "Medium",
       "inputSchema": {
@@ -26,21 +26,21 @@
     },
     {
       "id": "gpt-image.edit",
-      "description": "Remixes one to three supplied images into one new image from a prompt and returns it as a PNG attachment",
+      "description": "Remixes one to five referenced images into one new image from a prompt and attaches a PNG asset without sending it",
       "effect": "external-write",
       "risk": "Medium",
       "inputSchema": {
         "additionalProperties": false,
         "properties": {
           "images": {
-            "description": "The images to remix, as data URLs: data:image/png;base64,… (png, jpeg, or webp), at most 8 MiB decoded each. On a route that allows chat asset inputs for this capability, write chat-asset:<N> instead and the gateway substitutes the attachment's bytes before the call; on any other route that marker is refused.",
+            "description": "The images to remix as chat-asset:<N> references (PNG, JPEG or WebP), at most 8 MiB decoded each. The broker streams their bytes; data URLs and paths are not accepted. Outputs must be sent separately with asset send.",
             "items": {
-              "maxLength": 11184835,
-              "minLength": 24,
-              "pattern": "^(data:image/(png|jpeg|webp);base64,|chat-asset:)",
+              "maxLength": 31,
+              "minLength": 12,
+              "pattern": "^chat-asset:",
               "type": "string"
             },
-            "maxItems": 3,
+            "maxItems": 5,
             "minItems": 1,
             "type": "array"
           },

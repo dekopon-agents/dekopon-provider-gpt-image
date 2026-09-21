@@ -16,8 +16,8 @@ use crate::{COMMAND_WORD, EDIT, GENERATE};
 
 /// Largest prompt the schema admits, matching the native bound.
 const MAX_PROMPT_BYTES: usize = 16 * 1024;
-/// Longest `data:` URL the schema admits: 8 MiB base64-encoded behind the longest prefix.
-const MAX_IMAGE_URL_CHARACTERS: usize = 11_184_835;
+/// `chat-asset:` plus the longest u64 reference number.
+const MAX_REFERENCE_CHARACTERS: usize = 31;
 
 /// How the prompt is the only steering wheel, said once and reused in both schemas.
 const PROMPT_DESCRIPTION: &str = "What to draw, in words. The service chooses the quality, the \
@@ -33,14 +33,14 @@ pub(crate) fn manifest() -> ProviderManifest {
         id: "gpt-image".parse().expect("static provider ID"),
         description:
             "Generates and edits images with OpenAI's GPT Image models, billed to a ChatGPT \
-             subscription, and returns one PNG per invocation as a result attachment"
+             subscription, and attaches one PNG asset per invocation without sending it"
                 .to_owned(),
         command_words: vec![COMMAND_WORD.to_owned()],
         capabilities: vec![
             ProviderCapability {
                 id: GENERATE.parse().expect("static capability ID"),
                 description:
-                    "Generates one new image from a prompt and returns it as a PNG attachment"
+                    "Generates one new image from a prompt and attaches a PNG asset without sending it"
                         .to_owned(),
                 effect: EffectKind::ExternalWrite,
                 risk: RiskLevel::Medium,
@@ -49,8 +49,8 @@ pub(crate) fn manifest() -> ProviderManifest {
             ProviderCapability {
                 id: EDIT.parse().expect("static capability ID"),
                 description:
-                    "Remixes one to three supplied images into one new image from a prompt and \
-                     returns it as a PNG attachment"
+                    "Remixes one to five referenced images into one new image from a prompt and \
+                     attaches a PNG asset without sending it"
                         .to_owned(),
                 effect: EffectKind::ExternalWrite,
                 risk: RiskLevel::Medium,
@@ -72,7 +72,7 @@ fn generate_schema() -> Value {
     })
 }
 
-/// `gpt-image.edit`: a prompt and one to three reference images.
+/// `gpt-image.edit`: a prompt and one to five reference images.
 fn edit_schema() -> Value {
     json!({
         "type": "object",
@@ -83,18 +83,16 @@ fn edit_schema() -> Value {
             "images": {
                 "type": "array",
                 "minItems": 1,
-                "maxItems": 3,
+                "maxItems": crate::input::MAX_IMAGES,
                 "description":
-                    "The images to remix, as data URLs: data:image/png;base64,… (png, jpeg, or \
-                     webp), at most 8 MiB decoded each. On a route that allows chat asset inputs \
-                     for this capability, write chat-asset:<N> instead and the gateway substitutes \
-                     the attachment's bytes before the call; on any other route that marker is \
-                     refused.",
+                    "The images to remix as chat-asset:<N> references (PNG, JPEG or WebP), at \
+                     most 8 MiB decoded each. The broker streams their bytes; data URLs and paths \
+                     are not accepted. Outputs must be sent separately with asset send.",
                 "items": {
                     "type": "string",
-                    "minLength": 24,
-                    "maxLength": MAX_IMAGE_URL_CHARACTERS,
-                    "pattern": "^(data:image/(png|jpeg|webp);base64,|chat-asset:)"
+                    "minLength": 12,
+                    "maxLength": MAX_REFERENCE_CHARACTERS,
+                    "pattern": "^chat-asset:"
                 }
             }
         }

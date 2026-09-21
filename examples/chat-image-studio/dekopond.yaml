@@ -44,18 +44,9 @@ routes:
   - transport: workspace-slack
     match: { kind: directMessage }
     agent: chat-image-studio
-    # Both of these land in dekopon 0.13.0, and both are reach: provider bytes going out to a chat,
-    # and a sender's attachment bytes going in to an authorized capability. Dekopon's rule is that
-    # reach is configured by the owner, per route — so a route without these two keys runs this agent
-    # with no way to deliver an image and no way to accept one.
-    providerAttachments:
-      # One image per reply; the frame budget carries one ~11 MiB attachment and no more.
-      maxPerReply: 1
-    chatAssetInputs:
-      # Only this capability may receive an expanded `chat-asset:<N>`. The gateway substitutes the
-      # attachment's bytes as a data URL before proposing, bounded at 3 expansions and 8.5 MiB
-      # decoded per invocation, separately from the model's own `fetch_chat_asset` budget.
-      - gpt-image.edit
+    # References are resolved automatically, without rewriting proposal JSON.
+    # Attach does not deliver: configure the independent asset.send capability for delivery.
+    # The retired providerAttachments/chatAssetInputs keys must not be present.
     limits:
       # Drawing is one or two capability calls and a caption. Too much budget loops; one image per
       # call is the point.

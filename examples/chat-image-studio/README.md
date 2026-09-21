@@ -1,110 +1,72 @@
-# chat-image-studio
+# Chat image studio — asset-handle example
 
-An end-to-end walkthrough: a Slack DM asks for an image, a model writes one shell line, the broker
-authorizes it and spends a ChatGPT subscription's image allowance, and the PNG comes back into the
-thread as an attachment the model never saw.
+This example configures GPT Image 0.3.0 on Dekopon 0.18.0. A mapped Slack sender can generate a
+PNG or remix one to five conversation assets. Image bytes are never in proposal/result JSON.
 
-Five files, and the split between them is the point:
+**This example grants generation/editing and attachment, not delivery.** To send the generated
+file to Slack, install the independently released `dekopon-provider-asset`, add its `asset.send`
+constraint set using that release's exact effect/risk, grant it to the same principal in Cedar,
+and add the capability/provider to the agent catalog. Follow that provider's command help to send
+the returned reference. Do not assume image generation sends automatically.
 
-| File | Holds | Reads |
-|---|---|---|
-| `broker.yaml` | the socket, the constraint sets, the credential binding, the audit log | the component, `policies.cedar`, `broker-credentials.yaml` |
-| `policies.cedar` | who may act, through which gateway, as which agent | — |
-| `broker-credentials.yaml` | the *path* to a ChatGPT credential file the broker owns | that file |
-| `dekopon.yaml` | which agent answers and which capability words it may spell | — |
-| `dekopond.yaml` | Slack tokens, a model endpoint, the route's two opt-ins | `dekopon.yaml` |
+## Files
 
-The gateway holds no image credential and no policy. The broker holds no Slack token and never reads
-the catalog. Neither the model nor the shell session ever observes the ChatGPT access token: it is
-injected inside the broker's native HTTP engine, for `chatgpt.com` only, after the guest's headers
-have been validated.
+- `broker.yaml`: provider registration, broker-owned assets directory, constraints and identity map.
+- `broker-credentials.yaml.example`: copy to `broker-credentials.yaml`, point it at a separate
+  broker-owned ChatGPT subscription auth file, and chmod 0600.
+- `policies.cedar`: only the mapped `artist` through `dekopond-gateway` and this agent may invoke
+  generation/editing. There is deliberately no implicit send grant.
+- `dekopon.yaml`: agent instructions and catalog; no authority is granted here.
+- `dekopond.yaml`: Slack/model connection and route. Set the documented environment-variable names,
+  not secret values in these files.
 
-> **Versions.** The broker credential kind `chatgptSubscription`, and the two route keys
-> `providerAttachments` and `chatAssetInputs`, land in **dekopon 0.13.0** — the same release that
-> publishes the `dekopon:provider@0.3.0` WIT this component is built against. On 0.12.0 this example's
-> `broker-credentials.yaml` and `dekopond.yaml` refuse startup by naming the unknown fields, which is
-> the intended behaviour: an unknown key is a typo until the release that defines it.
+Replace example absolute paths, UID, workspace/user mapping and model endpoint before starting.
+Use a broker-owned mode-0700 socket directory, configuration files mode 0600, and a broker-owned
+mode-0700 asset root at `assets.rootPath`. Startup clears stale asset-root entries. Build the
+component using `../provider-workflows/build.sh` (with provider-workflows cloned beside the
+provider), or its absolute path, **from the provider root**, to produce `gpt-image-provider.wasm`.
 
-## Running it
+Create the independent broker credential family:
 
 ```console
-# 1. A ChatGPT credential family of its own, for the broker. Never share the gateway's file.
 dekopond auth chatgpt login --auth-file ~/.config/dekopon/chatgpt-auth.gpt-image.json
-chmod 0600 ~/.config/dekopon/chatgpt-auth.gpt-image.json
-
-# 2. Point the broker at it.
-cp broker-credentials.yaml.example broker-credentials.yaml
-$EDITOR broker-credentials.yaml          # set authFile to the absolute path above
-chmod 0600 broker-credentials.yaml broker.yaml policies.cedar dekopond.yaml
-
-# 3. The component the broker loads.
-(cd ../.. && ../provider-workflows/build.sh)
-
-# 4. Both halves.
-dekopon-brokerd --config broker.yaml
-DEKOPOND_SLACK_APP_TOKEN=xapp-… DEKOPOND_SLACK_BOT_TOKEN=xoxb-… dekopond --config dekopond.yaml
 ```
 
-Then, in a DM with the app:
+Never reuse the gateway model's auth file; the broker owns refresh of its credential family.
+Slack delivery needs `files:write`; input fetching needs `files:read`. Discord delivery needs
+Attach Files. No live deployment or credential login is performed by provider tests.
 
-> draw me a tangerine on a cluttered desk, warm afternoon light, vertical poster
+## Handle flow
 
-The model runs one line, and the image arrives as an upload:
-
+```text
+image edit --image chat-asset:1 --prompt "repaint as a watercolour"
+  → pure proposal, unchanged reference
+  → broker authorization (HTTP + asset.attach)
+  → open handle → streamed POST → response handle
+  → borrowed base64 → PNG writer → attach
+  → metadata + gateway assetNote with a new chat-asset reference
+  → separate authorized asset.send → reply delivery
 ```
-image generate --prompt "a tangerine on a cluttered desk in warm afternoon light, tall vertical poster composition"
-```
 
-Attach a photograph and ask for a repaint, and it runs:
+The last step requires the extra configuration above. If it is absent, the example agent reports
+that delivery is not configured instead of claiming success.
 
-```
-image edit --image chat-asset:1 --prompt "repaint as a loose watercolour sketch; keep the composition"
-```
+Remove old `providerAttachments` and `chatAssetInputs` keys; neither is used in 0.18.0. The gateway
+resolves exact reference leaves automatically. A reclaimed/missing asset is refused, not fetched
+again. Only PNG/JPEG/WebP inputs are accepted by this provider. Output is PNG. Attach/send are
+separate, and no error retries a paid POST.
 
-## What each opt-in buys
+## Bounds
 
-**`providerAttachments: {maxPerReply: 1}`** is what lets provider bytes reach a chat at all. The
-component returns a reserved top-level `attachments: [{mediaType, base64}]` key; the gateway's broker
-leg strips it, validates each entry (`image/png`, ≤ 8 MiB, PNG signature), routes the bytes to the
-reply's image slot, and replaces the key with `attached: [{mediaType, bytes}]` so the model and the
-shell see metadata only. Without the key on the route, the attachment is refused with fixed gateway
-text and an audit event — the capability still runs and still costs quota, so a route that can call
-this provider should have the opt-in.
+The asset host enforces 8 MiB decoded per asset, five inputs/outputs and 40 MiB decoded per
+invocation. `maxInFlightBytes: 67108864` is disk-spool accounting, not a JSON-frame allowance.
+No large `maxInputBytes`, `maxOutputBytes`, `maxHttpRequestBytes` or `maxFrameBytes` overrides remain.
+The request literal/header budget is 1 MiB; asset parts are host-streamed separately.
 
-A base64 blob is never printed into a transcript. The shell has no byte type and would clamp it to
-~128 KiB of garbage in the model's context; that is the reason the convention exists at all.
+**Keep the 12 MiB HTTP response ceiling and grant.** SDK/runtime 0.18.0 still charges streamed
+response bytes against `http.maxResponseBytes`, including the base64 JSON returned by upstream.
+Its default process ceiling is only 4 MiB. `timeoutMs: 240000` and the process timeout ceiling
+allow slow generations. The default per-store memory limit is unchanged.
 
-**`chatAssetInputs: [gpt-image.edit]`** is the inbound half. On a listed capability the gateway walks
-the proposal's input JSON and replaces any string exactly matching `chat-asset:<N>` with a
-`data:<mime>;base64,<bytes>` URL, bounded at three expansions and 8.5 MiB decoded per invocation.
-Unlisted, or over budget, and the proposal is refused before it is made — the component would
-otherwise receive the literal marker, which it rejects by name:
-`invalid-input: route does not allow chat asset inputs for gpt-image.edit`.
-
-## What the ceilings are for
-
-`broker.yaml` raises six `hostLimits` to 12 MiB-ish values and sets `serverLimits.maxFrameBytes` to
-14 MiB. That is one number propagating: an 8 MiB PNG is ~10.7 MiB of base64, a result carrying it plus
-its envelope needs ~11 MiB, the frame must hold the result plus 64 KiB, and the protocol's hard cap is
-16 MiB. So **one result carries one image** — which is also why `maxPerReply` is 1 and why the agent's
-instructions say one image per call.
-
-`hostLimits.maxMemoryBytes` is deliberately *not* raised. It stays at the 64 MiB default that every
-provider's store reserves against `maxTotalMemoryBytes`, and the component is measured against it: see
-the memory table in the [top-level README](../../README.md#memory-which-is-the-real-constraint).
-
-`maxInputBytes` is process-global with no per-capability knob, so raising it for this provider raises
-it for every provider on the broker. That is an accepted cost here, bounded by the shell's own value
-budget and by the frame.
-
-## What to expect in the audit log
-
-One `invocation` record per image, naming `gpt-image.generate` or `gpt-image.edit`, the principal, the
-policy ids that permitted it, `credentialInjected: true`, and the symbolic credential name
-`chatgpt-gpt-image` — never a token. One `HttpCallEvidence` entry for the single POST, with the
-injected headers excluded from the accounted bytes. With telemetry on, a
-`broker.credential.refresh` span appears the first time the broker rotates its own ChatGPT token,
-`outcome=rotated`.
-
-A 429 from the route shows up as `upstream-quota` with the refusal type and `x-codex-active-limit`, and
-the component does not retry: the allowance is spent and trying again would only spend more.
+Native tests prove request composition and output handling without network access. They do not
+prove this example against a live Slack workspace, actual credentials, or a deployed broker.

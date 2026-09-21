@@ -31,23 +31,19 @@ providers:
   # The checked-in component: two capabilities, one POST each, one host.
   # It must be a regular single-link file owned by this UID under owner-controlled directories.
   - ../../gpt-image-provider.wasm
+  # Delivery additionally requires the independent asset provider and its asset.send grant.
+  # Install/configure that provider using its own release documentation before enabling delivery.
 
-# Process-global ceilings. Every constraint set may only narrow these, so they are raised exactly as
-# far as one ~11 MiB base64 image plus its envelope needs and no further. `maxMemoryBytes` is
-# deliberately absent: it stays at the 64 MiB default, which every provider's store reserves against
-# `maxTotalMemoryBytes`, and the component is measured to fit inside it.
+assets:
+  # Create broker-owned mode 0700. Startup clears stale entries; outputs are temporary.
+  rootPath: /home/xavier/.local/share/dekopon/assets
+  maxInFlightBytes: 67108864
+
+# No large JSON/frame/request override: images travel out of band. Streamed HTTP responses still
+# obey the response grant, so retain 12 MiB for the upstream JSON containing an 8 MiB PNG as base64.
 hostLimits:
-  maxInputBytes: 12582912
-  maxOutputBytes: 12582912
-  maxHttpRequestBytes: 12582912
   maxHttpResponseBytes: 12582912
   maxTimeoutMs: 300000
-  maxTotalMemoryBytes: 268435456
-
-serverLimits:
-  # One result carries one ~11 MiB image. Startup requires maxFrameBytes ≥ maxOutputBytes + 64 KiB,
-  # and the protocol's own hard cap is 16 MiB.
-  maxFrameBytes: 14680064
 
 identities:
   # 501 is the server's own UID, which is what the owner-only socket currently permits. Change it to
@@ -89,14 +85,14 @@ constraintSets:
     credential: chatgpt-gpt-image
     constraints:
       timeoutMs: 240000
-      maxOutputBytes: 12582912
       http:
         allowedHosts: [chatgpt.com]
         allowedMethods: [POST]
         maxRequests: 1
-        maxRequestBytes: 12582912
+        maxRequestBytes: 1048576
         maxResponseBytes: 12582912
         allowPlaintextLoopback: false
+      asset: { attach: true }
   gpt-image.edit:
     provider: gpt-image
     effect: external-write
@@ -104,14 +100,14 @@ constraintSets:
     credential: chatgpt-gpt-image
     constraints:
       timeoutMs: 240000
-      maxOutputBytes: 12582912
       http:
         allowedHosts: [chatgpt.com]
         allowedMethods: [POST]
         maxRequests: 1
-        maxRequestBytes: 12582912
+        maxRequestBytes: 1048576
         maxResponseBytes: 12582912
         allowPlaintextLoopback: false
+      asset: { attach: true }
 
 # Optional, and the only way to keep audit past a restart: since 0.13.0 the audit record is the
 # `broker.decision`/`broker.execution` log record, on stdout as JSON always and as an OTLP log record
