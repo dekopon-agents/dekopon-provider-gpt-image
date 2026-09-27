@@ -21,12 +21,17 @@ use crate::{EDIT, GENERATE};
 const PIPED: &str = "-";
 
 // The `image` tree, declared once and rendered by clap. Plain comments, not doc comments: clap
-// renders a doc comment as the `about` line above `Usage:`.
+// renders a doc comment as the `about` line above `Usage:`. `long_about` is what `--help` shows
+// (`-h` keeps the short `about`), and `--help` is what a session bakes into its system prompt, so
+// this is where the `refused` outcome's finality reaches the model before it ever calls the word.
 #[derive(Parser)]
 #[command(
     name = "image",
     version,
-    about = "Generate and edit images with GPT Image"
+    about = "Generate and edit images with GPT Image",
+    long_about = "Generate and edit images with GPT Image. A `refused` result means the safety \
+                  system blocked the request; that decision is final, so do not retry it or \
+                  rephrase the prompt and try again."
 )]
 struct Image {
     #[command(subcommand)]
@@ -176,6 +181,25 @@ mod tests {
         let (stdout, _, status) = rendered(&["--version"], None);
         assert_eq!(status, 0);
         assert_eq!(stdout, format!("image {}\n", env!("CARGO_PKG_VERSION")));
+    }
+
+    /// A `refused` result reaches the model as `refused` inside a `failed:` line (unchanged wire
+    /// shape); this is the model's other source for the same fact, primed before it ever calls the
+    /// word, and it names `refused` specifically rather than talking about failures in general.
+    #[test]
+    fn help_names_a_refused_result_as_final() {
+        let (stdout, _, status) = rendered(&["--help"], None);
+        assert_eq!(status, 0);
+        assert!(
+            stdout.contains("`refused` result") && stdout.contains("is final"),
+            "{stdout}"
+        );
+
+        // `-h` stays the short summary: the finality note is long-form guidance, not the one-liner
+        // a person skimming `image -h` needs.
+        let (stdout, _, status) = rendered(&["-h"], None);
+        assert_eq!(status, 0);
+        assert!(!stdout.contains("refused"), "{stdout}");
     }
 
     #[test]

@@ -72,17 +72,20 @@ compatibility switches. See [the example](examples/chat-image-studio/README.md).
 | `invalid-input` | invalid fields, prompt, reference count/syntax/type, or HTTP request size |
 | `upstream-unauthorized` | 401/403; operator must re-login the image credential |
 | `upstream-quota` | 429, with validated quota/reset hints when present |
+| `refused` | OpenAI's safety system blocked the request (`moderation_blocked`); final, a fixed sentence, no upstream quotation |
 | `upstream-rejected` | other 4xx, with bounded upstream code/message |
 | `upstream-failure` | other non-success status, transport failure or HTTP denial |
 | `response-invalid` | invalid JSON/base64/PNG or contradictory output format |
 | `response-too-large` | decoded output exceeds 8 MiB, or HTTP response exceeds host allowance |
 | `asset-failure` | asset open/read/allocate/write/attach failed; stable host code only |
 
-Non-401/403/429 refusals quote only the upstream error code/type and message, with control
-characters removed and a 240-character bound. Bodies beyond 64 KiB are not parsed for that
-quotation. The broker echo-scans streamed responses; host diagnostic text and credentials are never
-forwarded by the component. An asset failure after the POST does not imply the paid action was
-undone. Nothing retries automatically.
+Non-401/403/429/`refused` refusals quote only the upstream error code/type and message, with
+control characters removed and a 240-character bound. Bodies beyond 64 KiB are not parsed for that
+quotation. `refused` is the one case that is a policy decision rather than a malformed or transient
+request: revising the prompt or images will not change it, and `image --help` says so. The broker
+echo-scans streamed responses; host diagnostic text and credentials are never forwarded by the
+component. An asset failure after the POST does not imply the paid action was undone. Nothing
+retries automatically.
 
 ## Broker configuration
 

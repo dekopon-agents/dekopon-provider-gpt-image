@@ -21,6 +21,8 @@ pub(crate) const UPSTREAM_UNAUTHORIZED: &str = "upstream-unauthorized";
 pub(crate) const UPSTREAM_QUOTA: &str = "upstream-quota";
 /// Upstream refused the request for a reason that is not quota or credential.
 pub(crate) const UPSTREAM_REJECTED: &str = "upstream-rejected";
+/// Upstream's safety system refused the request; final, and never fixed by revising the input.
+pub(crate) const REFUSED: &str = "refused";
 /// Upstream failed, or never answered.
 pub(crate) const UPSTREAM_FAILURE: &str = "upstream-failure";
 /// Upstream answered with something that is not a usable image response.
@@ -51,6 +53,17 @@ pub(crate) fn unauthorized() -> ProviderError {
 /// 429: the account's image allowance is spent. `detail` carries only validated tokens.
 pub(crate) fn quota(detail: String) -> ProviderError {
     ProviderError::new(UPSTREAM_QUOTA, detail)
+}
+
+/// OpenAI's safety system blocked the request (`moderation_blocked`). The sentence is fixed and
+/// carries no upstream quotation: unlike `rejected`, revising the input cannot change this
+/// decision, so there is nothing case-specific to report back.
+pub(crate) fn refused() -> ProviderError {
+    ProviderError::new(
+        REFUSED,
+        "the image service's safety system refused this request; that decision is final, so do \
+         not retry or rephrase it",
+    )
 }
 
 /// Any other 4xx. The status and `detail` are the only upstream values in the message.
