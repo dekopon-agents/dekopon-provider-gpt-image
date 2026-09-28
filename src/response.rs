@@ -227,9 +227,12 @@ fn status_error(response: &Response) -> ProviderError {
     }
 }
 
-/// OpenAI's safety system names itself `moderation_blocked` in the envelope's `code` (or `type`),
-/// the same lookup `upstream_detail` uses. It is the one 4xx that is a policy decision rather than
-/// a malformed request or a transient condition, so it is classified before the generic bucket.
+/// OpenAI's safety system names itself `moderation_blocked` or `content_policy_violation` in the
+/// envelope's `code` (or `type`), the same lookup `upstream_detail` uses. Either is a policy
+/// decision rather than a malformed request or a transient condition, so both are classified before
+/// the generic bucket, into the closed `refused` code rather than `upstream-rejected` — that
+/// distinction is what the broker's trace keeps; the exact upstream string never rides the sentence
+/// a model reads, which stays fixed for both.
 fn moderation_blocked(body: &[u8]) -> bool {
     let Some(failure) = error_object(body) else {
         return false;
@@ -238,7 +241,10 @@ fn moderation_blocked(body: &[u8]) -> bool {
         .get("code")
         .and_then(Value::as_str)
         .or_else(|| failure.get("type").and_then(Value::as_str));
-    code == Some("moderation_blocked")
+    matches!(
+        code,
+        Some("moderation_blocked") | Some("content_policy_violation")
+    )
 }
 
 /// The refusal's own `code` (or `type`) and `message`, bounded, or nothing.
@@ -619,10 +625,6 @@ mod tests {
         }
     }
 
-    /// A refused call says why. Before this the provider threw the envelope away and reported one
-    /// fixed sentence for every 4xx, so no operator and no model could tell an unsupported
-    /// reference image from a malformed body. (A `moderation_blocked` refusal is its own case,
-    /// tested separately below: it is final, and carries no upstream quotation at all.)
     #[test]
     fn a_refusal_quotes_the_upstream_code_and_message() {
         let rejected = project(refused(
@@ -675,9 +677,6 @@ mod tests {
         assert!(!quota.message().contains("Upgrade or try again later"));
     }
 
-    /// A moderation refusal is final. OpenAI's safety system names itself `moderation_blocked` in
-    /// the envelope, and this is the one 4xx a model must not treat as fixable: the sentence is
-    /// fixed and carries no upstream quotation, unlike every other refusal above.
     #[test]
     fn a_moderation_refusal_is_final_and_carries_no_upstream_quotation() {
         let refusal = project(refused(400, INVALID_REQUEST)).expect_err("a moderation refusal");
@@ -702,14 +701,37 @@ mod tests {
         .expect_err("a moderation refusal named by type");
         assert_eq!(by_type.code(), REFUSED);
 
-        // A code that merely contains the word is not an exact match, and stays in the generic
-        // bucket rather than silently widening what counts as final.
-        let near_miss = project(refused(
+        // content_policy_violation is the same final decision under a different name, by code or
+        // by type, with the same code-free sentence.
+        let by_content_policy_code = project(refused(
             400,
-            r#"{"error":{"code":"content_moderation_blocked_maybe","message":"x"}}"#,
+            r#"{"error":{"code":"content_policy_violation","message":"blocked"}}"#,
         ))
-        .expect_err("a refusal");
-        assert_eq!(near_miss.code(), UPSTREAM_REJECTED);
+        .expect_err("a moderation refusal named by code");
+        assert_eq!(by_content_policy_code.code(), REFUSED);
+        assert_eq!(by_content_policy_code.message(), refusal.message());
+
+        let by_content_policy_type = project(refused(
+            400,
+            r#"{"error":{"type":"content_policy_violation","message":"blocked"}}"#,
+        ))
+        .expect_err("a moderation refusal named by type");
+        assert_eq!(by_content_policy_type.code(), REFUSED);
+
+        // A code that merely contains one of the two words is not an exact match, and stays in the
+        // generic bucket rather than silently widening what counts as final.
+        for near_miss_code in [
+            "content_moderation_blocked_maybe",
+            "content_policy_violation_notice",
+            "not_content_policy_violation",
+        ] {
+            let near_miss = project(refused(
+                400,
+                &format!(r#"{{"error":{{"code":"{near_miss_code}","message":"x"}}}}"#),
+            ))
+            .expect_err("a refusal");
+            assert_eq!(near_miss.code(), UPSTREAM_REJECTED, "{near_miss_code}");
+        }
     }
 
     /// A body that is not the envelope leaves the sentence exactly as it was before 0.2.1: the
