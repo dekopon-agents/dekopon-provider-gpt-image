@@ -36,6 +36,17 @@ pub struct GenerateInput {
     pub piped_prompt: bool,
 }
 
+// Schema-only item type: execution keeps Vec<String> and repeats stricter reference validation.
+#[derive(JsonSchema)]
+#[schemars(transparent)]
+#[expect(
+    dead_code,
+    reason = "the newtype exists only to constrain the image item schema"
+)]
+struct ImageReference(
+    #[schemars(length(min = 12, max = 31), regex(pattern = "^chat-asset:"))] String,
+);
+
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
 pub struct EditInput {
@@ -43,7 +54,7 @@ pub struct EditInput {
     #[schemars(length(min = 1, max = 16384))]
     pub prompt: String,
     /// One to five chat-asset references; the broker supplies the bytes without exposing them to the guest.
-    #[schemars(length(min = 1, max = 5))]
+    #[schemars(length(min = 1, max = 5), with = "Vec<ImageReference>")]
     pub images: Vec<String>,
     /// Set only by the `image` command facade when `--prompt -` has piped input.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

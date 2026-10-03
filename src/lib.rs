@@ -365,6 +365,12 @@ mod tests {
             assert_eq!(cap.input_schema["additionalProperties"], false);
             assert!(cap.input_schema["properties"].get("quality").is_none());
         }
+        let images = &manifest.capabilities[1].input_schema["properties"]["images"];
+        assert_eq!(images["minItems"], 1);
+        assert_eq!(images["maxItems"], 5);
+        assert_eq!(images["items"]["minLength"], 12);
+        assert_eq!(images["items"]["maxLength"], 31);
+        assert_eq!(images["items"]["pattern"], "^chat-asset:");
     }
 
     #[test]

@@ -83,15 +83,86 @@ mod tests {
     fn words(args: &[&str]) -> Vec<String> {
         args.iter().map(|s| (*s).into()).collect()
     }
+    fn rendered(args: &[&str]) -> (String, String, u8) {
+        match provider::command::<GptImage>(&words(args), false) {
+            CommandRunOutcome::Rendered {
+                stdout,
+                stderr,
+                status,
+            } => (stdout, stderr, status),
+            _ => panic!("expected rendered result for {args:?}"),
+        }
+    }
+
     #[test]
-    fn help_and_refusal_guidance_remain_local() {
-        let CommandRunOutcome::Rendered { stdout, status, .. } =
-            provider::command::<GptImage>(&words(&["--help"]), false)
-        else {
-            panic!("help")
-        };
+    fn help_and_version_render_on_stdout_at_zero() {
+        for args in [&["--help"][..], &["-h"][..]] {
+            let (stdout, stderr, status) = rendered(args);
+            assert_eq!(status, 0, "{args:?}");
+            assert!(stdout.starts_with("Generate and edit images with GPT Image"));
+            assert!(stdout.contains("Usage: image <COMMAND>"));
+            assert!(stdout.contains("generate") && stdout.contains("edit"));
+            assert!(stderr.is_empty());
+        }
+        let (stdout, stderr, status) = rendered(&["generate", "--help"]);
+        assert_eq!(status, 0);
+        assert!(stdout.contains("Usage: image generate --prompt <TEXT>"));
+        assert!(stdout.contains("the service picks quality, size, and format"));
+        assert!(stderr.is_empty());
+        let (stdout, stderr, status) = rendered(&["edit", "--help"]);
+        assert_eq!(status, 0);
+        assert!(stdout.contains("--image <REF>") && stdout.contains("chat-asset:<N>"));
+        assert!(stderr.is_empty());
+        let (stdout, stderr, status) = rendered(&["--version"]);
+        assert_eq!(status, 0);
+        assert_eq!(stdout, format!("image {}\n", env!("CARGO_PKG_VERSION")));
+        assert!(stderr.is_empty());
+    }
+
+    #[test]
+    fn refusal_guidance_is_only_in_long_help() {
+        let (stdout, _, status) = rendered(&["--help"]);
         assert_eq!(status, 0);
         assert!(stdout.contains("`refused` result") && stdout.contains("is final"));
+        let (short, _, status) = rendered(&["-h"]);
+        assert_eq!(status, 0);
+        assert!(!short.contains("refused"));
+    }
+
+    #[test]
+    fn usage_renders_on_stderr_with_exit_two() {
+        for args in [
+            &[][..],
+            &["bogus"][..],
+            &["generate"][..],
+            &["generate", "--prompt"][..],
+            &["generate", "a tangerine"][..],
+            &["edit", "--prompt", "remix"][..],
+            &["edit", "--image", "chat-asset:1"][..],
+        ] {
+            let (stdout, stderr, status) = rendered(args);
+            assert_eq!(status, 2, "{args:?}");
+            assert!(stdout.is_empty(), "{args:?}: {stdout}");
+            assert!(!stderr.is_empty(), "{args:?}");
+        }
+        for args in [
+            &["bogus"][..],
+            &["generate"][..],
+            &["generate", "--prompt"][..],
+        ] {
+            assert!(rendered(args).1.starts_with("error: "), "{args:?}");
+        }
+        for (args, expected) in [
+            (&[][..], "Usage: image <COMMAND>"),
+            (&["bogus"][..], "Usage: image <COMMAND>"),
+            (&["generate"][..], "Usage: image generate --prompt <TEXT>"),
+            (
+                &["edit", "--prompt", "remix"][..],
+                "Usage: image edit --image <REF>",
+            ),
+        ] {
+            assert!(rendered(args).1.contains(expected), "{args:?}");
+        }
     }
     #[test]
     fn proposal_keeps_pipe_marker_not_contents() {
@@ -121,21 +192,55 @@ mod tests {
         assert_eq!(input["images"], serde_json::json!(["chat-asset:2"]));
     }
     #[test]
-    fn invalid_references_and_ignored_flags_propose_nothing() {
-        for args in [
-            words(&[
-                "edit",
-                "--image",
-                "data:image/png;base64,AA",
-                "--prompt",
-                "x",
-            ]),
-            words(&["generate", "--prompt", "x", "--quality", "high"]),
+    fn invalid_references_never_enter_proposals() {
+        let args = words(&[
+            "edit",
+            "--image",
+            "data:image/png;base64,AA",
+            "--prompt",
+            "x",
+        ]);
+        assert!(matches!(
+            provider::command::<GptImage>(&args, false),
+            CommandRunOutcome::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn every_ignored_flag_is_refused_by_name() {
+        for flag in [
+            "--quality",
+            "--size",
+            "--background",
+            "--model",
+            "--output-format",
         ] {
-            assert!(!matches!(
-                provider::command::<GptImage>(&args, false),
-                CommandRunOutcome::Proposed { .. }
-            ));
+            let (stdout, stderr, status) = rendered(&["generate", "--prompt", "x", flag, "high"]);
+            assert_eq!(status, 2, "{flag}");
+            assert!(stdout.is_empty());
+            assert!(
+                stderr.contains(flag) && stderr.contains("unexpected argument"),
+                "{flag}: {stderr}"
+            );
+        }
+    }
+
+    #[test]
+    fn rendered_text_has_no_escape_bytes() {
+        for args in [
+            &["--help"][..],
+            &["-h"][..],
+            &["--version"][..],
+            &["generate", "--help"][..],
+            &["edit", "--help"][..],
+            &["bogus"][..],
+            &["generate"][..],
+        ] {
+            let (stdout, stderr, _) = rendered(args);
+            assert!(
+                !stdout.contains('\u{1b}') && !stderr.contains('\u{1b}'),
+                "{args:?}"
+            );
         }
     }
 }
