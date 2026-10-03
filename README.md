@@ -1,7 +1,8 @@
 # dekopon-provider-gpt-image
 
 GPT Image generation and editing for [Dekopon](https://github.com/dekopon-agents/dekopon), as a
-WebAssembly component. Version **0.3.0** requires the **0.18.0** SDK/runtime asset contract.
+WebAssembly component. This prepublish branch builds against the core SDK at
+`f261fbcaaff80fa3ba14f1da90fbb47444b1c1b7` and requires the streams-only provider world.
 Billing uses a ChatGPT subscription, not a platform API key: this calls the route Codex calls.
 
 **One invocation is one POST, with no retry.** Repeating a call creates another image and spends
@@ -19,10 +20,12 @@ image --help
 
 | Capability | Input | Effect | Risk |
 |---|---|---|---|
-| `gpt-image.generate` | `{prompt}` | external-write | Medium |
-| `gpt-image.edit` | `{prompt, images}` | external-write | Medium |
+| `gpt-image.generate` | `{prompt, pipedPrompt?}` | external-write | Medium |
+| `gpt-image.edit` | `{prompt, images, pipedPrompt?}` | external-write | Medium |
 
-`prompt` is 1–16 KiB of UTF-8 after trimming. `--prompt -` reads stdin. `images` contains **one to
+`prompt` is 1–16 KiB of UTF-8 after trimming. `--prompt -` proposes only a pipe marker;
+the authorized invocation reads at most 16 KiB plus one byte from stdin. Empty, non-UTF-8 and
+oversized piped prompts fail before any HTTP or asset operation. `images` contains **one to
 five `chat-asset:<N>` references**, with PNG, JPEG or WebP content types. The broker enforces
 8 MiB decoded per asset and 40 MiB decoded per invocation. Paths, remote URLs and data URLs are
 refused, including by the pure command facade before proposing. Help and proposals never call
@@ -147,15 +150,16 @@ service guarantees. Single-account use only; do not pool credentials.
 Native injected-transport tests pin exact one- and five-image HTTP bodies and fixed composed lengths,
 one POST/no retry, output attachment sequencing, failure short-circuiting, bounded metadata and
 borrowed payload addresses. A counting allocator covers an approximately 8 MiB output with five
-input references and a metadata-only SDK envelope. These tests do not prove live upstream support,
-real host streaming/Content-Length, cross-UID transfer, or chat delivery; those belong to host and
-rollout integration. No asset/stream testkit adapter exists in SDK 0.18.0.
+input references and metadata-only stdout. Real-component conformance checks the imports and
+rejection of invalid piped prompts without a paid call. These tests do not prove live upstream
+support, real host streaming/Content-Length, cross-UID transfer, or chat delivery.
 
 ## Build and validate
 
-Exact crates.io pins: `dekopon-provider-sdk =0.18.0`, `dekopon-provider-http =0.18.0`,
-`wit-bindgen =0.62.0`. Toolchain: Rust 1.98.1, wasm-tools 1.259.0. WIT mirrors match the resolved
-published crates; the world imports `dekopon:http/client@1.1.0` and `dekopon:asset/asset@0.1.0`.
+Before publication the SDK and testkit use the pinned core git revision above. Toolchain:
+Rust 1.98.1, wasm-tools 1.259.0. The SDK owns the world and imports
+`dekopon:stdio/streams@0.1.0`, `dekopon:http/client@1.2.0` and
+`dekopon:asset/asset@0.1.0`. No WIT mirror is kept.
 
 ```console
 ../provider-workflows/build.sh
@@ -163,11 +167,11 @@ cargo fmt --all -- --check
 cargo deny --all-features check bans licenses sources advisories
 cargo clippy --all-targets --locked -- -D warnings
 cargo clippy --locked --target wasm32-unknown-unknown --lib -- -D warnings
-cargo test --locked
+DEKOPON_PROVIDER_COMPONENT="$PWD/gpt-image-provider.wasm" cargo test --locked
 ```
 
 CI is the pinned shared `dekopon-agents/provider-workflows` workflow, check `ci / validate`:
-mirrors, lint/policy checks, component inspection, native tests and independent reproducible builds.
+lint/policy checks, component inspection, native and real-component tests, and an SBOM.
 The build script writes `gpt-image-provider.wasm` and its checksum; neither is committed.
 
 ## Releases

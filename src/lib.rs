@@ -3,46 +3,104 @@
 //! One invocation is one fixed POST, with no retry and no guest-visible credential.
 //! Inputs are streamed by the host; the response is borrowed and attached out of band.
 
-use dekopon_provider_http::{Header, Response, StreamedRequest};
-use dekopon_provider_sdk::{
-    CapabilityId, CommandRun, Provider, ProviderError, ProviderManifest, asset,
+use crate::error::ProviderError;
+use dekopon_provider_sdk::asset;
+use dekopon_provider_sdk::provider::{
+    self, Assets, Capability, Header, Http, Proposal, Provider, Response, Stdout, StreamedRequest,
+    Usage,
 };
+use dekopon_provider_sdk::{EffectKind, RiskLevel};
 use serde_json::Value;
+use std::io::Write;
 
 mod b64;
 mod commands;
 mod error;
 mod input;
-mod manifest;
 #[cfg(test)]
 mod probe;
 mod response;
 mod wire;
 
-pub(crate) const GENERATE: &str = "gpt-image.generate";
-pub(crate) const EDIT: &str = "gpt-image.edit";
-pub(crate) const COMMAND_WORD: &str = "image";
+#[cfg(test)]
+const GENERATE: &str = "gpt-image.generate";
+#[cfg(test)]
+const EDIT: &str = "gpt-image.edit";
 
-mod bindings {
-    wit_bindgen::generate!({
-        path: "wit",
-        world: "provider",
-        generate_all,
-        pub_export_macro: true,
-    });
+pub struct GptImage;
+pub struct Generate;
+pub struct Edit;
+
+impl Provider for GptImage {
+    const ID: &'static str = "gpt-image";
+    const COMMAND_WORDS: &'static [&'static str] = &["image"];
+    const DESCRIPTION: &'static str = "Generates and edits images with OpenAI's GPT Image models, billed to a ChatGPT subscription, and attaches one PNG asset per invocation without sending it";
+    type Args = commands::Image;
+    type Capabilities = (Generate, Edit);
+    fn propose(args: Self::Args, stdin_piped: bool) -> Result<Proposal<Self>, Usage> {
+        commands::propose(args, stdin_piped)
+    }
 }
 
-struct GptImage;
-impl Provider for GptImage {
-    fn manifest() -> ProviderManifest {
-        manifest::manifest()
+impl Capability for Generate {
+    type Provider = GptImage;
+    const NAME: &'static str = "generate";
+    const DESCRIPTION: &'static str =
+        "Generates one new image from a prompt and attaches a PNG asset without sending it";
+    const EFFECT: EffectKind = EffectKind::ExternalWrite;
+    const RISK: RiskLevel = RiskLevel::Medium;
+    type Input = input::GenerateInput;
+    type Needs = (Http, Assets);
+    type Error = ProviderError;
+    fn run(
+        input: Self::Input,
+        (http, assets): Self::Needs,
+        out: &mut Stdout,
+    ) -> Result<(), Self::Error> {
+        let mut host = Host { http, assets };
+        let value = invoke_with(
+            "gpt-image.generate",
+            serde_json::to_value(input)
+                .map_err(|_| error::invalid_input("prompt could not be encoded"))?,
+            &mut host,
+        )?;
+        write_result(value, out)
     }
-    fn invoke(capability: &CapabilityId, input: Value) -> Result<Value, ProviderError> {
-        invoke_with(capability, input, &mut Host)
+}
+impl Capability for Edit {
+    type Provider = GptImage;
+    const NAME: &'static str = "edit";
+    const DESCRIPTION: &'static str = "Remixes one to five referenced images into one new image from a prompt and attaches a PNG asset without sending it";
+    const EFFECT: EffectKind = EffectKind::ExternalWrite;
+    const RISK: RiskLevel = RiskLevel::Medium;
+    type Input = input::EditInput;
+    type Needs = (Http, Assets);
+    type Error = ProviderError;
+    fn run(
+        input: Self::Input,
+        (http, assets): Self::Needs,
+        out: &mut Stdout,
+    ) -> Result<(), Self::Error> {
+        let mut host = Host { http, assets };
+        let value = invoke_with(
+            "gpt-image.edit",
+            serde_json::to_value(input)
+                .map_err(|_| error::invalid_input("prompt could not be encoded"))?,
+            &mut host,
+        )?;
+        write_result(value, out)
     }
-    fn run_command(argv: &[String], stdin: Option<&str>) -> Result<CommandRun, ProviderError> {
-        commands::run(argv, stdin)
-    }
+}
+fn write_result(value: Value, out: &mut Stdout) -> Result<(), ProviderError> {
+    serde_json::to_writer(&mut *out, &value)
+        .map_err(|_| error::failure("stdout could not be written"))?;
+    out.write_all(b"\n")
+        .map_err(|_| error::failure("stdout could not be written"))
+}
+
+#[allow(unsafe_code)]
+mod export {
+    dekopon_provider_sdk::export!(super::GptImage);
 }
 
 /// Native test seam for precisely the asset and HTTP operations used by production.
@@ -65,7 +123,10 @@ trait Transport {
     fn attach(&mut self, writer: Self::Writer) -> Result<(), ProviderError>;
 }
 
-struct Host;
+struct Host {
+    http: Http,
+    assets: Assets,
+}
 fn asset_error(error: asset::AssetError) -> ProviderError {
     // Only the stable code is echoed, not a host path or an upstream payload. A failure after
     // POST must never suggest silently repeating a paid generation.
@@ -81,7 +142,7 @@ impl Transport for Host {
     type Handle = asset::Handle;
     type Writer = asset::Writer;
     fn open(&mut self, reference: &str) -> Result<Self::Handle, ProviderError> {
-        asset::open(reference).map_err(asset_error)
+        self.assets.open(reference).map_err(asset_error)
     }
     fn content_type(&self, handle: &Self::Handle) -> String {
         handle.info().content_type
@@ -90,22 +151,24 @@ impl Transport for Host {
         &mut self,
         request: wire::Request<'_, Self::Handle>,
     ) -> Result<(u16, Vec<Header>, Self::Handle), ProviderError> {
-        let response = dekopon_provider_http::stream(StreamedRequest {
-            method: request.method,
-            uri: request.uri,
-            headers: request.headers,
-            body: request
-                .body
-                .into_iter()
-                .map(|part| match part {
-                    wire::Part::Literal(bytes) => dekopon_provider_http::Part::literal(bytes),
-                    wire::Part::Asset { handle, encoding } => {
-                        dekopon_provider_http::Part::asset(handle, encoding)
-                    }
-                })
-                .collect(),
-        })
-        .map_err(|failure| error::transport(&failure))?;
+        let response = self
+            .http
+            .stream(StreamedRequest {
+                method: request.method,
+                uri: request.uri,
+                headers: request.headers,
+                body: request
+                    .body
+                    .into_iter()
+                    .map(|part| match part {
+                        wire::Part::Literal(bytes) => provider::Part::literal(bytes),
+                        wire::Part::Asset { handle, encoding } => {
+                            provider::Part::asset(handle, encoding)
+                        }
+                    })
+                    .collect(),
+            })
+            .map_err(|failure| error::transport(&failure))?;
         Ok((response.status, response.headers, response.body))
     }
     fn read_all(&mut self, handle: &Self::Handle) -> Result<Vec<u8>, ProviderError> {
@@ -116,24 +179,26 @@ impl Transport for Host {
         content_type: &str,
         encoding: asset::Encoding,
     ) -> Result<Self::Writer, ProviderError> {
-        asset::allocate(content_type, encoding).map_err(asset_error)
+        self.assets
+            .allocate(content_type, encoding)
+            .map_err(asset_error)
     }
     fn write_all(&mut self, writer: &Self::Writer, bytes: &[u8]) -> Result<(), ProviderError> {
         writer.write_all(bytes).map_err(asset_error)
     }
     fn attach(&mut self, writer: Self::Writer) -> Result<(), ProviderError> {
-        asset::attach(writer).map(|_| ()).map_err(asset_error)
+        self.assets.attach(writer).map(|_| ()).map_err(asset_error)
     }
 }
 
 fn invoke_with<T: Transport>(
-    capability: &CapabilityId,
+    capability: &str,
     input: Value,
     transport: &mut T,
 ) -> Result<Value, ProviderError> {
-    let operation = match capability.as_str() {
-        GENERATE => input::Operation::Generate,
-        EDIT => input::Operation::Edit,
+    let operation = match capability {
+        "gpt-image.generate" => input::Operation::Generate,
+        "gpt-image.edit" => input::Operation::Edit,
         _ => return Err(error::unknown_capability()),
     };
     let input = input::parse(operation, input)?;
@@ -161,11 +226,9 @@ fn invoke_with<T: Transport>(
     )
 }
 
-dekopon_provider_sdk::export_provider_with_cli!(GptImage, bindings);
-
 #[cfg(test)]
-fn capability(value: &str) -> CapabilityId {
-    value.parse().expect("valid fixture")
+fn capability(value: &str) -> String {
+    value.to_owned()
 }
 
 #[cfg(test)]
@@ -291,26 +354,17 @@ mod tests {
     }
 
     #[test]
-    fn mirrors_and_manifest_snapshot() {
-        assert_eq!(
-            include_str!("../wit/deps/provider.wit"),
-            dekopon_provider_sdk::PROVIDER_WIT
-        );
-        assert_eq!(
-            include_str!("../wit/deps/http.wit"),
-            dekopon_provider_http::HTTP_WIT
-        );
-        assert_eq!(
-            include_str!("../wit/deps/asset.wit"),
-            dekopon_provider_sdk::ASSET_WIT
-        );
-        assert_eq!(
-            format!(
-                "{}\n",
-                serde_json::to_string_pretty(&GptImage::manifest()).unwrap()
-            ),
-            include_str!("../tests/fixtures/manifest.json")
-        );
+    fn manifest_preserves_authority_and_closed_inputs() {
+        let manifest = provider::manifest::<GptImage>().unwrap();
+        assert_eq!(manifest.id.as_str(), "gpt-image");
+        assert_eq!(manifest.command_words, ["image"]);
+        for (cap, name) in manifest.capabilities.iter().zip(["generate", "edit"]) {
+            assert_eq!(cap.id.as_str(), format!("gpt-image.{name}"));
+            assert_eq!(cap.effect, EffectKind::ExternalWrite);
+            assert_eq!(cap.risk, RiskLevel::Medium);
+            assert_eq!(cap.input_schema["additionalProperties"], false);
+            assert!(cap.input_schema["properties"].get("quality").is_none());
+        }
     }
 
     #[test]
@@ -445,8 +499,7 @@ mod tests {
             };
             let output = invoke_with(&capability(EDIT), json!({"prompt":"x","images":["chat-asset:1","chat-asset:2","chat-asset:3","chat-asset:4","chat-asset:5"]}), &mut fake).unwrap();
             assert_eq!(fake.written, payload.len());
-            serde_json::to_string(&dekopon_provider_sdk::ComponentResponse::Succeeded { output })
-                .unwrap()
+            serde_json::to_string(&output).unwrap()
         });
         assert!(output.len() < 1024);
         assert!(

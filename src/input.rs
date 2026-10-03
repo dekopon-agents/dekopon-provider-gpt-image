@@ -1,8 +1,10 @@
 //! Strict native validation of metadata-only inputs. No host imports run here.
 
-use dekopon_provider_sdk::ProviderError;
-use serde::Deserialize;
+use crate::error::ProviderError;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::io::Read;
 
 use crate::error;
 
@@ -12,7 +14,7 @@ pub(crate) enum Operation {
     Edit,
 }
 
-const MAX_PROMPT_BYTES: usize = 16 * 1024;
+pub(crate) const MAX_PROMPT_BYTES: usize = 16 * 1024;
 pub(crate) const MAX_IMAGES: usize = 5;
 const MAX_ECHOED_DETAIL: usize = 200;
 
@@ -23,41 +25,81 @@ pub(crate) struct ImageRequest {
     pub(crate) images: Vec<String>,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct RawGenerate {
-    prompt: String,
+pub struct GenerateInput {
+    /// Describe the subject, style, palette, composition and orientation; the service selects size, quality and format.
+    #[schemars(length(min = 1, max = 16384))]
+    pub prompt: String,
+    /// Set only by the `image` command facade when `--prompt -` has piped input.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub piped_prompt: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct RawEdit {
-    prompt: String,
-    images: Vec<String>,
+pub struct EditInput {
+    /// Describe the change; the service selects size, quality and format.
+    #[schemars(length(min = 1, max = 16384))]
+    pub prompt: String,
+    /// One to five chat-asset references; the broker supplies the bytes without exposing them to the guest.
+    #[schemars(length(min = 1, max = 5))]
+    pub images: Vec<String>,
+    /// Set only by the `image` command facade when `--prompt -` has piped input.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub piped_prompt: bool,
 }
 
 pub(crate) fn parse(operation: Operation, input: Value) -> Result<ImageRequest, ProviderError> {
-    let (prompt, images) = match operation {
+    let (prompt, images, piped_prompt) = match operation {
         Operation::Generate => {
-            let raw: RawGenerate = serde_json::from_value(input).map_err(|error| {
+            let raw: GenerateInput = serde_json::from_value(input).map_err(|error| {
                 error::invalid_input(format!(
-                    "gpt-image.generate takes exactly one field, `prompt`: {}",
+                    "gpt-image.generate takes a prompt: {}",
                     bounded(&error.to_string())
                 ))
             })?;
-            (raw.prompt, Vec::new())
+            (raw.prompt, Vec::new(), raw.piped_prompt)
         }
         Operation::Edit => {
-            let raw: RawEdit = serde_json::from_value(input).map_err(|error| {
+            let raw: EditInput = serde_json::from_value(input).map_err(|error| {
                 error::invalid_input(format!(
-                    "gpt-image.edit takes exactly two fields, `prompt` and `images`: {}",
+                    "gpt-image.edit takes a prompt and images: {}",
                     bounded(&error.to_string())
                 ))
             })?;
             validate_images(&raw.images)?;
-            (raw.prompt, raw.images)
+            (raw.prompt, raw.images, raw.piped_prompt)
         }
     };
+    let prompt = if piped_prompt {
+        if prompt != "-" {
+            return Err(error::invalid_input("pipedPrompt requires --prompt -"));
+        }
+        let mut bytes = Vec::new();
+        dekopon_provider_sdk::provider::stdin()
+            .ok_or_else(|| error::invalid_input("piped prompt is missing"))?
+            .take((MAX_PROMPT_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| error::invalid_input("piped prompt could not be read"))?;
+        if bytes.len() > MAX_PROMPT_BYTES {
+            return Err(error::invalid_input(
+                "piped prompt exceeds the 16 KiB limit",
+            ));
+        }
+        String::from_utf8(bytes).map_err(|_| error::invalid_input("piped prompt is not UTF-8"))?
+    } else {
+        prompt
+    };
+    validate_prompt(&prompt)?;
+    let trimmed = prompt.trim();
+    Ok(ImageRequest {
+        prompt: trimmed.to_owned(),
+        images,
+    })
+}
+
+pub(crate) fn validate_prompt(prompt: &str) -> Result<(), ProviderError> {
     let trimmed = prompt.trim();
     if trimmed.is_empty() {
         return Err(error::invalid_input("prompt must not be blank"));
@@ -68,10 +110,7 @@ pub(crate) fn parse(operation: Operation, input: Value) -> Result<ImageRequest, 
             trimmed.len()
         )));
     }
-    Ok(ImageRequest {
-        prompt: trimmed.to_owned(),
-        images,
-    })
+    Ok(())
 }
 
 /// Also called by the pure command facade so data URLs never enter a proposal.
