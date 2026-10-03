@@ -1,62 +1,38 @@
-//! The `image` command word: a small command-line program, rendered by the guest.
-//!
-//! `image --help`, `image generate --help`, `image --version`, and every usage error are answered
-//! here and authorize nothing — the SDK's clap layer renders them as text with an exit status, the
-//! way the upstream tool's `main` would. A well-formed argv becomes a *proposal*, which then travels
-//! the identical authorization path a direct `cap gpt-image.generate {…}` call takes: constraint-set
-//! lookup, Cedar, then credential injection inside the broker's HTTP engine. Naming a capability the
-//! caller was not granted is a denial, not an escalation.
-//!
-//! There are no `--quality`, `--size`, `--background`, or `--model` flags, because the route has no
-//! such controls: it accepts those fields and ignores them. A model that types one gets clap's usage
-//! error naming the flag, which is more useful than silently accepting a setting that does nothing.
+//! Pure image command grammar. Piped text is represented only by a marker until invocation.
+use clap::{Args, Parser, Subcommand};
+use dekopon_provider_sdk::provider::{Proposal, Usage};
 
-use dekopon_provider_sdk::clap::{self, Args, CommandFactory, FromArgMatches, Parser, Subcommand};
-use dekopon_provider_sdk::{CommandInvocation, CommandRun, ProviderError, cli};
-use serde_json::json;
+use crate::{Edit, Generate, GptImage, input};
 
-use crate::{EDIT, GENERATE};
-
-/// The value that means "read the text piped into the word".
-const PIPED: &str = "-";
-
-// The `image` tree, declared once and rendered by clap. Plain comments, not doc comments: clap
-// renders a doc comment as the `about` line above `Usage:`. `long_about` is what `--help` shows
-// (`-h` keeps the short `about`), and `--help` is what a session bakes into its system prompt, so
-// this is where the `refused` outcome's finality reaches the model before it ever calls the word.
 #[derive(Parser)]
 #[command(
     name = "image",
     version,
     about = "Generate and edit images with GPT Image",
-    long_about = "Generate and edit images with GPT Image. A `refused` result means the safety \
-                  system blocked the request; that decision is final, so do not retry it or \
-                  rephrase the prompt and try again."
+    long_about = "Generate and edit images with GPT Image. A `refused` result means the safety system blocked the request; that decision is final, so do not retry it or rephrase the prompt and try again."
 )]
-struct Image {
+pub struct Image {
     #[command(subcommand)]
     action: Action,
 }
 
-// Each subcommand proposes exactly one capability, named by the `const` the manifest declares, so a
-// renamed capability is a compile error rather than an exit code discovered mid-session.
 #[derive(Subcommand)]
 enum Action {
     /// Generate one new image from a prompt
-    Generate(Generate),
+    Generate(GenerateArgs),
     /// Remix one to five images with a prompt
-    Edit(Edit),
+    Edit(EditArgs),
 }
 
 #[derive(Args)]
-struct Generate {
+struct GenerateArgs {
     /// What to draw; the service picks quality, size, and format. `-` reads the piped value
     #[arg(long, value_name = "TEXT", required = true)]
     prompt: String,
 }
 
 #[derive(Args)]
-struct Edit {
+struct EditArgs {
     /// A reference image: chat-asset:<N>. Repeatable, up to 5; PNG, JPEG or WebP
     #[arg(long = "image", value_name = "REF", required = true)]
     images: Vec<String>,
@@ -65,148 +41,97 @@ struct Edit {
     prompt: String,
 }
 
-/// Runs one `image` argv.
-pub(crate) fn run(argv: &[String], stdin: Option<&str>) -> Result<CommandRun, ProviderError> {
-    cli::run_command(Image::command(), argv, stdin, dispatch)
-}
-
-/// Turns clap's matches into the proposal for the selected subcommand.
-///
-/// Runs only after clap accepted the argv, so what is left to decide is what clap cannot know:
-/// whether anything was piped. Reference syntax is checked before proposing as well as in invoke;
-/// the pure facade never resolves references or calls a host import.
-fn dispatch(
-    matches: clap::ArgMatches,
-    stdin: Option<&str>,
-) -> Result<CommandInvocation, ProviderError> {
-    let image = Image::from_arg_matches(&matches)
-        .map_err(|error| ProviderError::new("usage", error.to_string()))?;
-    match image.action {
-        Action::Generate(generate) => Ok(CommandInvocation {
-            capability: GENERATE.parse().expect("static capability ID"),
-            input: json!({"prompt": prompt(generate.prompt, stdin, "generate")?}),
-            secret_use: None,
-        }),
-        Action::Edit(edit) => {
-            crate::input::validate_images(&edit.images)?;
-            Ok(CommandInvocation {
-                capability: EDIT.parse().expect("static capability ID"),
-                input: json!({
-                    "prompt": prompt(edit.prompt, stdin, "edit")?,
-                    "images": edit.images,
-                }),
-                secret_use: None,
-            })
+pub(crate) fn propose(args: Image, stdin_piped: bool) -> Result<Proposal<GptImage>, Usage> {
+    match args.action {
+        Action::Generate(args) => {
+            let piped_prompt = args.prompt == "-";
+            if piped_prompt && !stdin_piped {
+                return Err(Usage::new(
+                    "image generate --prompt -: nothing was piped in",
+                ));
+            }
+            if !piped_prompt {
+                input::validate_prompt(&args.prompt).map_err(|e| Usage::new(e.to_string()))?;
+            }
+            Ok(Proposal::to::<Generate>(input::GenerateInput {
+                prompt: args.prompt,
+                piped_prompt,
+            }))
+        }
+        Action::Edit(args) => {
+            input::validate_images(&args.images).map_err(|e| Usage::new(e.to_string()))?;
+            let piped_prompt = args.prompt == "-";
+            if piped_prompt && !stdin_piped {
+                return Err(Usage::new("image edit --prompt -: nothing was piped in"));
+            }
+            if !piped_prompt {
+                input::validate_prompt(&args.prompt).map_err(|e| Usage::new(e.to_string()))?;
+            }
+            Ok(Proposal::to::<Edit>(input::EditInput {
+                prompt: args.prompt,
+                images: args.images,
+                piped_prompt,
+            }))
         }
     }
-}
-
-/// The prompt, or the piped value when the caller wrote `-`.
-fn prompt(prompt: String, stdin: Option<&str>, word: &str) -> Result<String, ProviderError> {
-    if prompt != PIPED {
-        return Ok(prompt);
-    }
-    stdin.map(str::to_owned).ok_or_else(|| {
-        ProviderError::new(
-            "usage",
-            format!("image {word} --prompt -: nothing was piped in"),
-        )
-    })
 }
 
 #[cfg(test)]
 mod tests {
-    use dekopon_provider_sdk::{CommandInvocation, CommandRun, Provider};
-    use serde_json::json;
-
-    use super::run;
-    use crate::{EDIT, GENERATE, GptImage};
-
-    fn argv(words: &[&str]) -> Vec<String> {
-        words.iter().map(|word| (*word).to_owned()).collect()
+    use super::*;
+    use dekopon_provider_sdk::{CommandRunOutcome, provider};
+    fn words(args: &[&str]) -> Vec<String> {
+        args.iter().map(|s| (*s).into()).collect()
     }
-
-    fn rendered(words: &[&str], stdin: Option<&str>) -> (String, String, u8) {
-        let run = run(&argv(words), stdin).expect("clap answers are rendered, not declined");
-        let CommandRun::Rendered {
-            stdout,
-            stderr,
-            status,
-        } = run
-        else {
-            panic!("expected rendered text for {words:?}, got {run:?}");
-        };
-        (stdout, stderr, status)
-    }
-
-    fn proposal(words: &[&str], stdin: Option<&str>) -> CommandInvocation {
-        match run(&argv(words), stdin).expect("a well-formed argv proposes") {
-            CommandRun::Proposal(invocation) => invocation,
-            other => panic!("expected a proposal for {words:?}, got {other:?}"),
+    fn rendered(args: &[&str]) -> (String, String, u8) {
+        match provider::command::<GptImage>(&words(args), false) {
+            CommandRunOutcome::Rendered {
+                stdout,
+                stderr,
+                status,
+            } => (stdout, stderr, status),
+            _ => panic!("expected rendered result for {args:?}"),
         }
     }
 
     #[test]
-    fn help_and_version_render_on_stdout_at_status_zero() {
-        for words in [&["--help"][..], &["-h"][..]] {
-            let (stdout, stderr, status) = rendered(words, None);
-            assert_eq!(status, 0, "{words:?}");
-            assert!(
-                stdout.starts_with("Generate and edit images with GPT Image"),
-                "{stdout}"
-            );
-            assert!(stdout.contains("Usage: image <COMMAND>"), "{stdout}");
-            assert!(stdout.contains("generate"), "{stdout}");
-            assert!(stdout.contains("edit"), "{stdout}");
-            assert!(stderr.is_empty(), "{stderr}");
+    fn help_and_version_render_on_stdout_at_zero() {
+        for args in [&["--help"][..], &["-h"][..]] {
+            let (stdout, stderr, status) = rendered(args);
+            assert_eq!(status, 0, "{args:?}");
+            assert!(stdout.starts_with("Generate and edit images with GPT Image"));
+            assert!(stdout.contains("Usage: image <COMMAND>"));
+            assert!(stdout.contains("generate") && stdout.contains("edit"));
+            assert!(stderr.is_empty());
         }
-
-        let (stdout, _, status) = rendered(&["generate", "--help"], None);
+        let (stdout, stderr, status) = rendered(&["generate", "--help"]);
         assert_eq!(status, 0);
-        assert!(
-            stdout.contains("Usage: image generate --prompt <TEXT>"),
-            "{stdout}"
-        );
-        // The help page is where a model learns that asking for a size is pointless.
-        assert!(
-            stdout.contains("the service picks quality, size, and format"),
-            "{stdout}"
-        );
-
-        let (stdout, _, status) = rendered(&["edit", "--help"], None);
+        assert!(stdout.contains("Usage: image generate --prompt <TEXT>"));
+        assert!(stdout.contains("the service picks quality, size, and format"));
+        assert!(stderr.is_empty());
+        let (stdout, stderr, status) = rendered(&["edit", "--help"]);
         assert_eq!(status, 0);
-        assert!(stdout.contains("--image <REF>"), "{stdout}");
-        assert!(stdout.contains("chat-asset:<N>"), "{stdout}");
-
-        let (stdout, _, status) = rendered(&["--version"], None);
+        assert!(stdout.contains("--image <REF>") && stdout.contains("chat-asset:<N>"));
+        assert!(stderr.is_empty());
+        let (stdout, stderr, status) = rendered(&["--version"]);
         assert_eq!(status, 0);
         assert_eq!(stdout, format!("image {}\n", env!("CARGO_PKG_VERSION")));
-    }
-
-    /// A `refused` result reaches the model as `refused` inside a `failed:` line (unchanged wire
-    /// shape); this is the model's other source for the same fact, primed before it ever calls the
-    /// word, and it names `refused` specifically rather than talking about failures in general.
-    #[test]
-    fn help_names_a_refused_result_as_final() {
-        let (stdout, _, status) = rendered(&["--help"], None);
-        assert_eq!(status, 0);
-        assert!(
-            stdout.contains("`refused` result") && stdout.contains("is final"),
-            "{stdout}"
-        );
-
-        // `-h` stays the short summary: the finality note is long-form guidance, not the one-liner
-        // a person skimming `image -h` needs.
-        let (stdout, _, status) = rendered(&["-h"], None);
-        assert_eq!(status, 0);
-        assert!(!stdout.contains("refused"), "{stdout}");
+        assert!(stderr.is_empty());
     }
 
     #[test]
-    fn usage_errors_render_on_stderr_at_status_two() {
-        for words in [
-            // A bare `image` is a usage error whose text is the help page, as the upstream tool's
-            // would be: nothing was asked, so nothing is proposed.
+    fn refusal_guidance_is_only_in_long_help() {
+        let (stdout, _, status) = rendered(&["--help"]);
+        assert_eq!(status, 0);
+        assert!(stdout.contains("`refused` result") && stdout.contains("is final"));
+        let (short, _, status) = rendered(&["-h"]);
+        assert_eq!(status, 0);
+        assert!(!short.contains("refused"));
+    }
+
+    #[test]
+    fn usage_renders_on_stderr_with_exit_two() {
+        for args in [
             &[][..],
             &["bogus"][..],
             &["generate"][..],
@@ -215,15 +140,19 @@ mod tests {
             &["edit", "--prompt", "remix"][..],
             &["edit", "--image", "chat-asset:1"][..],
         ] {
-            let (stdout, stderr, status) = rendered(words, None);
-            assert_eq!(status, 2, "{words:?}");
-            assert!(stdout.is_empty(), "{words:?}: {stdout}");
-            assert!(!stderr.is_empty(), "{words:?}");
+            let (stdout, stderr, status) = rendered(args);
+            assert_eq!(status, 2, "{args:?}");
+            assert!(stdout.is_empty(), "{args:?}: {stdout}");
+            assert!(!stderr.is_empty(), "{args:?}");
         }
-
-        // Where clap has a usage line to print, the line starts with the word the model typed
-        // rather than with the subcommand alone.
-        for (words, usage) in [
+        for args in [
+            &["bogus"][..],
+            &["generate"][..],
+            &["generate", "--prompt"][..],
+        ] {
+            assert!(rendered(args).1.starts_with("error: "), "{args:?}");
+        }
+        for (args, expected) in [
             (&[][..], "Usage: image <COMMAND>"),
             (&["bogus"][..], "Usage: image <COMMAND>"),
             (&["generate"][..], "Usage: image generate --prompt <TEXT>"),
@@ -232,24 +161,53 @@ mod tests {
                 "Usage: image edit --image <REF>",
             ),
         ] {
-            let (_, stderr, _) = rendered(words, None);
-            assert!(stderr.contains(usage), "{words:?}: {stderr}");
-        }
-
-        for words in [
-            &["bogus"][..],
-            &["generate"][..],
-            &["generate", "--prompt"][..],
-        ] {
-            let (_, stderr, _) = rendered(words, None);
-            assert!(stderr.starts_with("error: "), "{words:?}: {stderr}");
+            assert!(rendered(args).1.contains(expected), "{args:?}");
         }
     }
-
-    /// The flags the route ignores do not exist, and clap says so by name rather than accepting a
-    /// setting that would do nothing.
     #[test]
-    fn the_flags_the_route_ignores_are_refused_by_name() {
+    fn proposal_keeps_pipe_marker_not_contents() {
+        let argv = words(&["generate", "--prompt", "-"]);
+        let CommandRunOutcome::Proposed {
+            capability, input, ..
+        } = provider::command::<GptImage>(&argv, true)
+        else {
+            panic!("proposal")
+        };
+        assert_eq!(capability.as_str(), "gpt-image.generate");
+        assert_eq!(input, serde_json::json!({"prompt":"-", "pipedPrompt":true}));
+        assert!(matches!(
+            provider::command::<GptImage>(&argv, false),
+            CommandRunOutcome::Failed { .. }
+        ));
+        let CommandRunOutcome::Proposed {
+            capability, input, ..
+        } = provider::command::<GptImage>(
+            &words(&["edit", "--image", "chat-asset:2", "--prompt", "-"]),
+            true,
+        )
+        else {
+            panic!("edit")
+        };
+        assert_eq!(capability.as_str(), "gpt-image.edit");
+        assert_eq!(input["images"], serde_json::json!(["chat-asset:2"]));
+    }
+    #[test]
+    fn invalid_references_never_enter_proposals() {
+        let args = words(&[
+            "edit",
+            "--image",
+            "data:image/png;base64,AA",
+            "--prompt",
+            "x",
+        ]);
+        assert!(matches!(
+            provider::command::<GptImage>(&args, false),
+            CommandRunOutcome::Failed { .. }
+        ));
+    }
+
+    #[test]
+    fn every_ignored_flag_is_refused_by_name() {
         for flag in [
             "--quality",
             "--size",
@@ -257,9 +215,9 @@ mod tests {
             "--model",
             "--output-format",
         ] {
-            let (_, stderr, status) =
-                rendered(&["generate", "--prompt", "a tangerine", flag, "high"], None);
+            let (stdout, stderr, status) = rendered(&["generate", "--prompt", "x", flag, "high"]);
             assert_eq!(status, 2, "{flag}");
+            assert!(stdout.is_empty());
             assert!(
                 stderr.contains(flag) && stderr.contains("unexpected argument"),
                 "{flag}: {stderr}"
@@ -268,106 +226,20 @@ mod tests {
     }
 
     #[test]
-    fn a_well_formed_argv_proposes_a_camel_case_input() {
-        let invocation = proposal(&["generate", "--prompt", "a tangerine on a desk"], None);
-        assert_eq!(invocation.capability.as_str(), GENERATE);
-        assert_eq!(invocation.input, json!({"prompt": "a tangerine on a desk"}));
-
-        let invocation = proposal(
-            &[
-                "edit",
-                "--image",
-                "chat-asset:2",
-                "--image",
-                "chat-asset:3",
-                "--prompt",
-                "repaint as a watercolour",
-            ],
-            None,
-        );
-        assert_eq!(invocation.capability.as_str(), EDIT);
-        assert_eq!(
-            invocation.input,
-            json!({
-                "prompt": "repaint as a watercolour",
-                "images": ["chat-asset:2", "chat-asset:3"]
-            })
-        );
-    }
-
-    #[test]
-    fn legacy_data_urls_are_never_proposed() {
-        let error = run(
-            &argv(&[
-                "edit",
-                "--image",
-                "data:image/png;base64,iVBORw0KGgo=",
-                "--prompt",
-                "remix",
-            ]),
-            None,
-        )
-        .unwrap_err();
-        assert!(error.message().contains("chat-asset:<N>"));
-    }
-
-    #[test]
-    fn a_dash_prompt_reads_the_piped_value_and_declines_when_nothing_was_piped() {
-        let piped = "a tangerine, rendered as a woodcut\n";
-        let invocation = proposal(&["generate", "--prompt", "-"], Some(piped));
-        assert_eq!(invocation.input, json!({"prompt": piped}));
-
-        let invocation = proposal(
-            &["edit", "--image", "chat-asset:1", "--prompt", "-"],
-            Some(piped),
-        );
-        assert_eq!(invocation.input["prompt"], piped);
-
-        let error = run(&argv(&["generate", "--prompt", "-"]), None)
-            .expect_err("a decline, reported to the model as a usage error");
-        assert_eq!(error.code(), "usage");
-        assert_eq!(
-            error.message(),
-            "image generate --prompt -: nothing was piped in"
-        );
-    }
-
-    /// The rendered text is plain: the SDK's clap is built without `color`, so no escape byte can
-    /// reach a model's transcript.
-    #[test]
-    fn no_rendered_text_contains_an_escape_byte() {
-        for words in [
+    fn rendered_text_has_no_escape_bytes() {
+        for args in [
             &["--help"][..],
+            &["-h"][..],
             &["--version"][..],
             &["generate", "--help"][..],
             &["edit", "--help"][..],
             &["bogus"][..],
             &["generate"][..],
         ] {
-            let (stdout, stderr, _) = rendered(words, None);
-            assert!(!stdout.contains('\u{1b}'), "{words:?}: {stdout:?}");
-            assert!(!stderr.contains('\u{1b}'), "{words:?}: {stderr:?}");
-        }
-    }
-
-    /// Every capability the facade can propose is one the manifest declares. Without this, a
-    /// renamed capability would be discovered by a model at runtime as an authorization denial.
-    #[test]
-    fn every_dispatch_target_is_declared_in_the_manifest() {
-        let declared: Vec<String> = GptImage::manifest()
-            .capabilities
-            .iter()
-            .map(|capability| capability.id.to_string())
-            .collect();
-        for words in [
-            &["generate", "--prompt", "a tangerine"][..],
-            &["edit", "--image", "chat-asset:1", "--prompt", "remix"][..],
-        ] {
-            let invocation = proposal(words, None);
+            let (stdout, stderr, _) = rendered(args);
             assert!(
-                declared.contains(&invocation.capability.to_string()),
-                "{words:?} proposes {} which the manifest does not declare",
-                invocation.capability
+                !stdout.contains('\u{1b}') && !stderr.contains('\u{1b}'),
+                "{args:?}"
             );
         }
     }

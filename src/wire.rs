@@ -1,7 +1,10 @@
 //! Fixed Codex POST bodies, with image bytes supplied only by host-streamed asset parts.
 
-use dekopon_provider_http::{Header, method};
-use dekopon_provider_sdk::{ProviderError, asset::Encoding};
+use crate::error::ProviderError;
+use dekopon_provider_sdk::{
+    asset::Encoding,
+    provider::{Header, method},
+};
 
 use crate::{error, input::ImageRequest, input::Operation};
 

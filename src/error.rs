@@ -10,8 +10,43 @@
 //! operator needs beyond the quotation is in the broker's audit log and the provider span, not in
 //! the text a prompt can read back.
 
-use dekopon_provider_http::{HttpError, HttpErrorCode};
-use dekopon_provider_sdk::ProviderError;
+use dekopon_provider_sdk::provider::{Code, Failure, HttpError, HttpErrorCode};
+
+/// A bounded, stable error independent of the host's raw response or credentials.
+#[derive(Debug)]
+pub struct ProviderError {
+    code: &'static str,
+    message: String,
+}
+
+impl ProviderError {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            code,
+            message: message.into(),
+        }
+    }
+    #[cfg(test)]
+    pub(crate) fn code(&self) -> &'static str {
+        self.code
+    }
+    #[cfg(test)]
+    pub(crate) fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+impl std::fmt::Display for ProviderError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl Failure for ProviderError {
+    fn code(&self) -> Code {
+        Code::new(self.code)
+    }
+}
 
 /// The caller's metadata or asset reference is invalid.
 pub(crate) const INVALID_INPUT: &str = "invalid-input";
@@ -210,7 +245,7 @@ fn bounded(mut detail: String) -> String {
 
 #[cfg(test)]
 mod tests {
-    use dekopon_provider_http::{HttpError, HttpErrorCode};
+    use dekopon_provider_sdk::provider::{HttpError, HttpErrorCode};
 
     use super::{
         INVALID_INPUT, MAX_UPSTREAM_DETAIL_CHARACTERS, RESPONSE_TOO_LARGE, UPSTREAM_FAILURE,

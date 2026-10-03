@@ -1,8 +1,8 @@
 //! Borrow the upstream base64, validate its PNG signature and decoded length, and write that
 //! slice directly to a broker-owned base64 asset. The ordinary result contains metadata only.
 
-use dekopon_provider_http::{Header, Response};
-use dekopon_provider_sdk::ProviderError;
+use crate::error::ProviderError;
+use dekopon_provider_sdk::provider::{Header, Response};
 use serde::Deserialize;
 use serde_json::{Map, Number, Value, json};
 
@@ -357,13 +357,12 @@ fn token(value: &str, maximum: usize) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use dekopon_provider_http::{Header, Response};
-    use dekopon_provider_sdk::{ComponentFailure, ComponentResponse};
+    use dekopon_provider_sdk::provider::{Header, Response};
     use serde_json::{Value, json};
 
     use super::{MAX_IMAGE_BYTES, token};
 
-    fn project(response: Response) -> Result<Value, dekopon_provider_sdk::ProviderError> {
+    fn project(response: Response) -> Result<Value, crate::error::ProviderError> {
         super::project(response, |bytes| {
             assert!(crate::b64::starts_with_png_signature(
                 str::from_utf8(bytes).unwrap()
@@ -813,20 +812,8 @@ mod tests {
 
         // The structured failure the SDK returns is a code and a message, and this is the message.
         // There is no other field for a detail to arrive in.
-        let failure = ComponentResponse::Failed {
-            error: ComponentFailure {
-                code: error.code().to_owned(),
-                message: message.to_owned(),
-            },
-        };
-        let encoded = serde_json::to_value(&failure).expect("the failure serializes");
-        assert_eq!(encoded["error"]["code"], UPSTREAM_REJECTED);
-        assert_eq!(encoded["error"]["message"], message);
-        assert_eq!(
-            encoded["error"].as_object().expect("an object").len(),
-            2,
-            "the failure carries a code and a message and nothing else"
-        );
+        assert_eq!(error.code(), UPSTREAM_REJECTED);
+        assert_eq!(error.message(), message);
     }
 
     #[test]
