@@ -1,8 +1,8 @@
 # dekopon-provider-gpt-image
 
 GPT Image generation and editing for [Dekopon](https://github.com/dekopon-agents/dekopon), as a
-WebAssembly component. This prepublish branch builds against the core SDK at
-`f261fbcaaff80fa3ba14f1da90fbb47444b1c1b7` and requires the streams-only provider world.
+WebAssembly component. Version 0.4.0 builds against the published core SDK `=0.31.0`
+and requires the streams-only provider world.
 Billing uses a ChatGPT subscription, not a platform API key: this calls the route Codex calls.
 
 **One invocation is one POST, with no retry.** Repeating a call creates another image and spends
@@ -156,7 +156,7 @@ support, real host streaming/Content-Length, cross-UID transfer, or chat deliver
 
 ## Build and validate
 
-Before publication the SDK and testkit use the pinned core git revision above. Toolchain:
+The SDK and testkit use exact crates.io `=0.31.0` pins. Toolchain:
 Rust 1.98.1, wasm-tools 1.259.0. The SDK owns the world and imports
 `dekopon:stdio/streams@0.1.0`, `dekopon:http/client@1.2.0` and
 `dekopon:asset/asset@0.1.0`. No WIT mirror is kept.
@@ -170,7 +170,7 @@ cargo clippy --locked --target wasm32-unknown-unknown --lib -- -D warnings
 DEKOPON_PROVIDER_COMPONENT="$PWD/gpt-image-provider.wasm" cargo test --locked
 ```
 
-CI is the pinned shared `dekopon-agents/provider-workflows` workflow, check `ci / validate`:
+CI calls `dekopon-agents/provider-workflows` at `@main`, check `ci / validate`:
 lint/policy checks, component inspection, native and real-component tests, and an SBOM.
 The build script writes `gpt-image-provider.wasm` and its checksum; neither is committed.
 
