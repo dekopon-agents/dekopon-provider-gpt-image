@@ -1,7 +1,7 @@
 # dekopon-provider-gpt-image
 
 GPT Image generation and editing for [Dekopon](https://github.com/dekopon-agents/dekopon), as a
-WebAssembly component. Version 0.4.0 builds against the published core SDK `=0.31.0`
+WebAssembly component. Version 0.5.0 builds against the published core SDK `=0.33.0`
 and requires the streams-only provider world.
 Billing uses a ChatGPT subscription, not a platform API key: this calls the route Codex calls.
 
@@ -156,9 +156,9 @@ support, real host streaming/Content-Length, cross-UID transfer, or chat deliver
 
 ## Build and validate
 
-The SDK and testkit use exact crates.io `=0.31.0` pins. Toolchain:
+The SDK and testkit use exact crates.io `=0.33.0` pins. Toolchain:
 Rust 1.98.1, wasm-tools 1.259.0. The SDK owns the world and imports
-`dekopon:stdio/streams@0.1.0`, `dekopon:http/client@1.2.0` and
+`dekopon:stdio/streams@0.1.0`, `dekopon:http/client@1.1.0` and
 `dekopon:asset/asset@0.1.0`. No WIT mirror is kept.
 
 ```console

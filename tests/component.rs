@@ -27,11 +27,15 @@ fn real_component_conforms_and_has_only_authorized_imports() {
     let json = String::from_utf8(wit.stdout).unwrap();
     for import in [
         "dekopon:stdio/streams@0.1.0",
-        "dekopon:http/client@1.2.0",
+        "dekopon:http/client@1.1.0",
         "dekopon:asset/asset@0.1.0",
     ] {
         assert!(json.contains(import), "missing {import}");
     }
+    assert!(
+        !json.contains("dekopon:http/client@1.2.0"),
+        "obsolete HTTP import"
+    );
     assert!(!json.contains("wasi:"), "unexpected ambient WASI import");
 }
 
