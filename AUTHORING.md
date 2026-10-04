@@ -93,7 +93,7 @@ actionlint
 Observed component evidence:
 
 - size `380545` bytes; SHA-256 `9b0434263c00e026ef56430bc2198b10f1dc05b35784f016640e70653f8f6703`;
-- sole core import `dekopon:http/client@1.0.0` function `send`;
+- HTTP import was recorded as `dekopon:http/client@1.0.0` function `send` (this historical expectation was incorrect; the 0.5.0 rebuild imports `dekopon:http/client@1.1.0`, verified by real-component conformance);
 - component exports exactly `describe`, `invoke`, and `run-command`;
 - no WASI import, no `resolve-command`, no banned `wasi` / `wasm-bindgen` / `js-sys` dependency, no
   handwritten `unsafe` outside the test-only allocator, and no embedded source, Cargo, or sysroot path;
