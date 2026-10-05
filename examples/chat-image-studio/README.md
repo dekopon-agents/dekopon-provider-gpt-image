@@ -1,7 +1,7 @@
 # Chat image studio — asset-handle example
 
-This example configures GPT Image 0.3.0 on Dekopon 0.18.0. A mapped Slack sender can generate a
-PNG or remix one to five conversation assets. Image bytes are never in proposal/result JSON.
+This example configures GPT Image 0.3.0 on Dekopon 0.34.0 or later. A mapped Slack sender can
+generate a PNG or remix one to five conversation assets. Image bytes are never in proposal/result JSON.
 
 **This example grants generation/editing and attachment, not delivery.** To send the generated
 file to Slack, install the independently released `dekopon-provider-asset`, add its `asset.send`
