@@ -98,7 +98,7 @@ credential's bound destinations and refuses those headers from guests. Use a sep
 `chatgptSubscription` credential family, not the gateway model's auth file:
 
 ```console
-dekopond auth chatgpt login --auth-file ~/.config/dekopon/chatgpt-auth.gpt-image.json
+dekopon-gatewayd auth chatgpt login --auth-file ~/.config/dekopon/chatgpt-auth.gpt-image.json
 ```
 
 The broker owns rotation. Never point broker and gateway at the same credential file.

@@ -1,7 +1,7 @@
 # Chat image studio — asset-handle example
 
-This example configures GPT Image 0.3.0 on Dekopon 0.18.0. A mapped Slack sender can generate a
-PNG or remix one to five conversation assets. Image bytes are never in proposal/result JSON.
+This example configures GPT Image 0.3.0 on Dekopon 0.34.0 or later. A mapped Slack sender can
+generate a PNG or remix one to five conversation assets. Image bytes are never in proposal/result JSON.
 
 **This example grants generation/editing and attachment, not delivery.** To send the generated
 file to Slack, install the independently released `dekopon-provider-asset`, add its `asset.send`
@@ -14,10 +14,10 @@ the returned reference. Do not assume image generation sends automatically.
 - `broker.yaml`: provider registration, broker-owned assets directory, constraints and identity map.
 - `broker-credentials.yaml.example`: copy to `broker-credentials.yaml`, point it at a separate
   broker-owned ChatGPT subscription auth file, and chmod 0600.
-- `policies.cedar`: only the mapped `artist` through `dekopond-gateway` and this agent may invoke
+- `policies.cedar`: only the mapped `artist` through `dekopon-gatewayd` and this agent may invoke
   generation/editing. There is deliberately no implicit send grant.
 - `dekopon.yaml`: agent instructions and catalog; no authority is granted here.
-- `dekopond.yaml`: Slack/model connection and route. Set the documented environment-variable names,
+- `gatewayd.yaml`: Slack/model connection and route. Set the documented environment-variable names,
   not secret values in these files.
 
 Replace example absolute paths, UID, workspace/user mapping and model endpoint before starting.
@@ -29,7 +29,7 @@ provider), or its absolute path, **from the provider root**, to produce `gpt-ima
 Create the independent broker credential family:
 
 ```console
-dekopond auth chatgpt login --auth-file ~/.config/dekopon/chatgpt-auth.gpt-image.json
+dekopon-gatewayd auth chatgpt login --auth-file ~/.config/dekopon/chatgpt-auth.gpt-image.json
 ```
 
 Never reuse the gateway model's auth file; the broker owns refresh of its credential family.

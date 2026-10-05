@@ -16,7 +16,7 @@
 permit(principal == Dekopon::Principal::"artist",
        action == Dekopon::Action::"agent.prompt",
        resource == Dekopon::Agent::"chat-image-studio")
-when { context has via && context.via == "dekopond-gateway" };
+when { context has via && context.via == "dekopon-gatewayd" };
 
 // Capability surface: driving the agent implies neither of these actions, and holding them implies no
 // session. `context.via` keeps attested and direct authority disjoint; `context.agent` pins the
@@ -27,11 +27,11 @@ permit(principal == Dekopon::Principal::"artist",
        action == Dekopon::Action::"gpt-image.generate",
        resource == Dekopon::Provider::"gpt-image")
 when { context has agent && context.agent == "chat-image-studio"
-    && context has via && context.via == "dekopond-gateway" };
+    && context has via && context.via == "dekopon-gatewayd" };
 
 @id("chat-image-studio-edit-for-artist")
 permit(principal == Dekopon::Principal::"artist",
        action == Dekopon::Action::"gpt-image.edit",
        resource == Dekopon::Provider::"gpt-image")
 when { context has agent && context.agent == "chat-image-studio"
-    && context has via && context.via == "dekopond-gateway" };
+    && context has via && context.via == "dekopon-gatewayd" };
