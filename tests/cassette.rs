@@ -40,7 +40,7 @@ fn replay(name: &str, input: Value) {
         .asset(
             2,
             "image/png",
-            include_bytes!("fixtures/synthetic-mask.png").to_vec(),
+            include_bytes!("fixtures/synthetic-reference-2.png").to_vec(),
         )
     } else {
         run
@@ -127,7 +127,7 @@ fn authored_generation_cassette_replays_through_real_component() {
 }
 
 #[test]
-fn authored_edit_cassette_streams_image_and_mask_references_and_reads_output() {
+fn authored_edit_cassette_streams_two_references_and_reads_output() {
     replay(
         "edit",
         json!({"prompt":"a synthetic orange square","images":["chat-asset:1","chat-asset:2"]}),

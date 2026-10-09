@@ -6,8 +6,8 @@ use std::{path::PathBuf, process::Command};
 #[test]
 fn real_component_conforms_and_has_only_authorized_imports() {
     let component = std::env::var_os("DEKOPON_PROVIDER_COMPONENT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("gpt-image-provider.wasm"));
+        .expect("DEKOPON_PROVIDER_COMPONENT must name the freshly built component");
+    let component = PathBuf::from(component);
     assert!(
         component.is_file(),
         "build the real component before running conformance: {}",
@@ -43,8 +43,8 @@ fn real_component_conforms_and_has_only_authorized_imports() {
 #[test]
 fn real_component_rejects_bad_piped_prompts_before_any_paid_effect() {
     let component = std::env::var_os("DEKOPON_PROVIDER_COMPONENT")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("gpt-image-provider.wasm"));
+        .expect("DEKOPON_PROVIDER_COMPONENT must name the freshly built component");
+    let component = PathBuf::from(component);
     for piped in [vec![], vec![0xff], vec![b'a'; 16 * 1024 + 1]] {
         let outcome = Harness::<GptImage>::get(&component)
             .stdin(piped)
