@@ -183,8 +183,7 @@ The build script writes `gpt-image-provider.wasm` and its checksum; neither is c
 
 Authored synthetic cassette v1 fixtures in `tests/cassettes/gpt-image` exercise real-component
 generation and editing with exact HTTPS request capture and attached PNG readback. Editing uses
-a one-pixel image and transparent mask-like reference through the existing `images` array, not
-a separate mask parameter. The base64 decoder is a test-only dependency; the guest still keeps
+two one-pixel references through the `images` array. The base64 decoder is a test-only dependency; the guest still keeps
 the response payload encoded. No live vendor calls or credentials are used.
 
 ## Releases
