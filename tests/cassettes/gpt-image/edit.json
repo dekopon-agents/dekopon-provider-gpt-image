@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "request": {
+    "method": "POST",
+    "path": "/images/edits",
+    "query": null,
+    "headers": {
+      "accept": "application/json",
+      "content-type": "application/json",
+      "originator": "dekopon"
+    },
+    "body": {
+      "text": "{\"images\":[{\"image_url\":\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP438DwHwAGgAJ/EEwb4QAAAABJRU5ErkJggg==\"},{\"image_url\":\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4//8/AwAI/AL+p5qgoAAAAABJRU5ErkJggg==\"}],\"prompt\":\"a synthetic orange square\",\"model\":\"gpt-image-2\",\"background\":\"auto\",\"quality\":\"auto\",\"size\":\"auto\"}"
+    }
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "json": {
+        "data": [
+          {
+            "b64_json": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgaPj/HwAEggJ/59habAAAAABJRU5ErkJggg==",
+            "generation_id": "synthetic-edit"
+          }
+        ],
+        "size": "1x1",
+        "output_format": "png"
+      }
+    }
+  }
+}
