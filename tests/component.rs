@@ -29,6 +29,7 @@ fn real_component_conforms_and_has_only_authorized_imports() {
         "dekopon:stdio/streams@0.1.0",
         "dekopon:http/client@1.1.0",
         "dekopon:asset/asset@0.1.0",
+        "dekopon:settings/config@0.1.0",
     ] {
         assert!(json.contains(import), "missing {import}");
     }
@@ -60,4 +61,72 @@ fn real_component_rejects_bad_piped_prompts_before_any_paid_effect() {
         );
     }
     assert_eq!(Harness::<GptImage>::compiled_identities(), 1);
+}
+
+#[test]
+fn malformed_owner_settings_fail_before_requests() {
+    let component = std::env::var_os("DEKOPON_PROVIDER_COMPONENT")
+        .expect("DEKOPON_PROVIDER_COMPONENT must name the freshly built component");
+    for settings in [
+        json!({"baseUrl":"https://fixture.test/api?query=1"}),
+        json!({"baseUrl":"https://user@fixture.test/api"}),
+        json!({"baseUrl":"https://fixture.test/api#fragment"}),
+        json!({"baseUrl":"ftp://fixture.test/api"}),
+        json!({"baseUrl":"fixture.test/api"}),
+        json!({"baseUrl":42}),
+        json!({"baseUrl":"https://fixture.test/api","unknown":true}),
+    ] {
+        for (capability, input) in [
+            ("gpt-image.generate", json!({"prompt":"synthetic"})),
+            (
+                "gpt-image.edit",
+                json!({"prompt":"synthetic","images":["chat-asset:1"]}),
+            ),
+        ] {
+            let output = Harness::<GptImage>::get(&component)
+                .asset(
+                    1,
+                    "image/png",
+                    include_bytes!("fixtures/synthetic-image.png").to_vec(),
+                )
+                .settings(settings.clone())
+                .call(capability, input)
+                .unwrap();
+            assert_ne!(output.status, 0);
+            assert!(output.stderr.contains("settings"), "{}", output.stderr);
+            assert!(output.stdout.is_empty());
+            assert!(output.http_calls.is_empty());
+            assert!(output.http_request.is_none());
+            assert!(output.assets.attached.is_empty());
+        }
+    }
+}
+
+#[test]
+fn schemas_and_dispatch_reject_model_origin_controls() {
+    let manifest = dekopon_provider_sdk::provider::manifest::<GptImage>().unwrap();
+    let component = std::env::var_os("DEKOPON_PROVIDER_COMPONENT")
+        .expect("DEKOPON_PROVIDER_COMPONENT must name the freshly built component");
+    for capability in manifest.capabilities {
+        assert_eq!(capability.input_schema["additionalProperties"], false);
+        for field in ["baseUrl", "endpoint", "apiOrigin", "host"] {
+            assert!(capability.input_schema["properties"].get(field).is_none());
+            let mut input = json!({"prompt":"synthetic"});
+            if capability.id.as_str() == "gpt-image.edit" {
+                input["images"] = json!(["chat-asset:1"]);
+            }
+            input[field] = json!("https://fixture.test");
+            let output = Harness::<GptImage>::get(&component)
+                .asset(
+                    1,
+                    "image/png",
+                    include_bytes!("fixtures/synthetic-image.png").to_vec(),
+                )
+                .call(capability.id.as_str(), input)
+                .unwrap();
+            assert_ne!(output.status, 0);
+            assert!(output.http_calls.is_empty());
+            assert!(output.http_request.is_none());
+        }
+    }
 }

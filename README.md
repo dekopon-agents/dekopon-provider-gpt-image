@@ -1,7 +1,7 @@
 # dekopon-provider-gpt-image
 
 GPT Image generation and editing for [Dekopon](https://github.com/dekopon-agents/dekopon), as a
-WebAssembly component. Version 0.5.0 builds against the published core SDK `=0.33.0`
+WebAssembly component. Version 0.6.0 builds against the published core SDK `=0.42.0`
 and requires the streams-only provider world.
 Billing uses a ChatGPT subscription, not a platform API key: this calls the route Codex calls.
 
@@ -140,7 +140,13 @@ Explicit delivery needs the asset provider, a matching `asset.send` constraint s
 
 ## Upstream facts and limits of testing
 
-Endpoints are fixed at `https://chatgpt.com/backend-api/codex/images/{generations,edits}` with model
+The owner may set `providerSettings.gpt-image.baseUrl`; it defaults to
+`https://chatgpt.com/backend-api/codex`. Generation appends `/images/generations` and editing
+appends `/images/edits`, preserving a configured path prefix. This is an owner setting, not a
+model input or CLI flag. Invalid bases (including userinfo, query, fragment, or non-HTTP schemes)
+fail before requests. Broker destination grants and credential bindings still apply unchanged.
+
+Requests use model
 `gpt-image-2`. The fixed Codex shape is JSON in/out, no SSE, polling, partial images or follow-up
 URL download. This undocumented first-party route was researched against `openai/codex` at
 `ea53c8d`. Historical live observations on 2026-09-10: 23–37-second calls, server-chosen PNG
@@ -151,15 +157,16 @@ Native injected-transport tests pin exact one- and five-image HTTP bodies and fi
 one POST/no retry, output attachment sequencing, failure short-circuiting, bounded metadata and
 borrowed payload addresses. A counting allocator covers an approximately 8 MiB output with five
 input references and metadata-only stdout. Real-component conformance checks the imports and
-rejection of invalid piped prompts without a paid call. These tests do not prove live upstream
-support, real host streaming/Content-Length, cross-UID transfer, or chat delivery.
+rejection of invalid piped prompts and settings without a paid call. Real-component cassettes also
+check streamed image references, Content-Length and output asset bytes. These tests do not prove
+live upstream support, cross-UID transfer, or chat delivery.
 
 ## Build and validate
 
-The SDK and testkit use exact crates.io `=0.33.0` pins. Toolchain:
+The SDK and testkit use exact crates.io `=0.42.0` pins. Toolchain:
 Rust 1.98.1, wasm-tools 1.259.0. The SDK owns the world and imports
 `dekopon:stdio/streams@0.1.0`, `dekopon:http/client@1.1.0` and
-`dekopon:asset/asset@0.1.0`. No WIT mirror is kept.
+`dekopon:asset/asset@0.1.0` and `dekopon:settings/config@0.1.0`. No WIT mirror is kept.
 
 ```console
 ../provider-workflows/build.sh
@@ -173,6 +180,12 @@ DEKOPON_PROVIDER_COMPONENT="$PWD/gpt-image-provider.wasm" cargo test --locked
 CI calls `dekopon-agents/provider-workflows` at `@main`, check `ci / validate`:
 lint/policy checks, component inspection, native and real-component tests, and an SBOM.
 The build script writes `gpt-image-provider.wasm` and its checksum; neither is committed.
+
+Authored synthetic cassette v1 fixtures in `tests/cassettes/gpt-image` exercise real-component
+generation and editing with exact HTTPS request capture and attached PNG readback. Editing uses
+a one-pixel image and transparent mask-like reference through the existing `images` array, not
+a separate mask parameter. The base64 decoder is a test-only dependency; the guest still keeps
+the response payload encoded. No live vendor calls or credentials are used.
 
 ## Releases
 

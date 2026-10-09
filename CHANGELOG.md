@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.6.0] - 2026-10-09
+
+### Added
+
+- Owner setting `providerSettings.gpt-image.baseUrl` preserves API path prefixes for generation and editing; the default remains `https://chatgpt.com/backend-api/codex`.
+- Synthetic real-component generation and edit fixtures verify streamed request bodies and attached PNG bytes.
+
+### Changed
+
+- Pin the published SDK and testkit to 0.42.0.
+
 ## [0.5.0] - 2026-10-04
 
 ### Changed

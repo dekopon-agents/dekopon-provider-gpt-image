@@ -5,9 +5,10 @@
 
 use crate::error::ProviderError;
 use dekopon_provider_sdk::asset;
+use dekopon_provider_sdk::provider::endpoint::Base;
 use dekopon_provider_sdk::provider::{
-    self, Assets, Capability, Header, Http, Proposal, Provider, Response, Stdout, StreamedRequest,
-    Usage,
+    self, Assets, Capability, Header, Http, Proposal, Provider, Response, Settings, Stdout,
+    StreamedRequest, Usage,
 };
 use dekopon_provider_sdk::{EffectKind, RiskLevel};
 use serde_json::Value;
@@ -26,6 +27,21 @@ mod wire;
 const GENERATE: &str = "gpt-image.generate";
 #[cfg(test)]
 const EDIT: &str = "gpt-image.edit";
+
+const DEFAULT_BASE: Base = Base::from_static("https://chatgpt.com/backend-api/codex");
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GptImageSettings {
+    #[serde(default)]
+    base_url: Option<Base>,
+}
+
+impl GptImageSettings {
+    fn base(self) -> Base {
+        self.base_url.unwrap_or(DEFAULT_BASE)
+    }
+}
 
 pub struct GptImage;
 pub struct Generate;
@@ -50,18 +66,20 @@ impl Capability for Generate {
     const EFFECT: EffectKind = EffectKind::ExternalWrite;
     const RISK: RiskLevel = RiskLevel::Medium;
     type Input = input::GenerateInput;
-    type Needs = (Http, Assets);
+    type Needs = (Settings<GptImageSettings>, Http, Assets);
     type Error = ProviderError;
     fn run(
         input: Self::Input,
-        (http, assets): Self::Needs,
+        (settings, http, assets): Self::Needs,
         out: &mut Stdout,
     ) -> Result<(), Self::Error> {
+        let base = settings.into_inner().base();
         let mut host = Host { http, assets };
         let value = invoke_with(
             "gpt-image.generate",
             serde_json::to_value(input)
                 .map_err(|_| error::invalid_input("prompt could not be encoded"))?,
+            &base,
             &mut host,
         )?;
         write_result(value, out)
@@ -74,18 +92,20 @@ impl Capability for Edit {
     const EFFECT: EffectKind = EffectKind::ExternalWrite;
     const RISK: RiskLevel = RiskLevel::Medium;
     type Input = input::EditInput;
-    type Needs = (Http, Assets);
+    type Needs = (Settings<GptImageSettings>, Http, Assets);
     type Error = ProviderError;
     fn run(
         input: Self::Input,
-        (http, assets): Self::Needs,
+        (settings, http, assets): Self::Needs,
         out: &mut Stdout,
     ) -> Result<(), Self::Error> {
+        let base = settings.into_inner().base();
         let mut host = Host { http, assets };
         let value = invoke_with(
             "gpt-image.edit",
             serde_json::to_value(input)
                 .map_err(|_| error::invalid_input("prompt could not be encoded"))?,
+            &base,
             &mut host,
         )?;
         write_result(value, out)
@@ -194,6 +214,7 @@ impl Transport for Host {
 fn invoke_with<T: Transport>(
     capability: &str,
     input: Value,
+    base: &Base,
     transport: &mut T,
 ) -> Result<Value, ProviderError> {
     let operation = match capability {
@@ -208,7 +229,7 @@ fn invoke_with<T: Transport>(
         let content_type = transport.content_type(&handle);
         images.push((handle, content_type));
     }
-    let request = wire::http_request(operation, &input, &images)?;
+    let request = wire::http_request(operation, &input, &images, base)?;
     let (status, headers, handle) = transport.stream(request)?;
     drop(images);
     let body = transport.read_all(&handle)?;
@@ -248,6 +269,7 @@ mod tests {
         mime: String,
         fail: &'static str,
         written: usize,
+        expected_uri: Option<String>,
     }
     impl Default for Fake {
         fn default() -> Self {
@@ -261,6 +283,7 @@ mod tests {
                 mime: "image/png".into(),
                 fail: "",
                 written: 0,
+                expected_uri: None,
             }
         }
     }
@@ -297,11 +320,13 @@ mod tests {
             assert_eq!(request.method, "POST");
             assert_eq!(
                 request.uri,
-                if self.opened.is_empty() {
-                    wire::GENERATE_URL
-                } else {
-                    wire::EDIT_URL
-                }
+                self.expected_uri
+                    .as_deref()
+                    .unwrap_or(if self.opened.is_empty() {
+                        "https://chatgpt.com/backend-api/codex/images/generations"
+                    } else {
+                        "https://chatgpt.com/backend-api/codex/images/edits"
+                    })
             );
             assert_eq!(
                 request.headers,
@@ -354,6 +379,44 @@ mod tests {
     }
 
     #[test]
+    fn owner_settings_preserve_default_and_prefixed_routes() {
+        for (settings, expected_base) in [
+            (json!({}), "https://chatgpt.com/backend-api/codex"),
+            (
+                json!({"baseUrl":"https://fixture.test/proxy/codex/"}),
+                "https://fixture.test/proxy/codex",
+            ),
+        ] {
+            let base = serde_json::from_value::<GptImageSettings>(settings)
+                .unwrap()
+                .base();
+            for (capability, path, input) in [
+                (
+                    GENERATE,
+                    "/images/generations",
+                    json!({"prompt":"synthetic"}),
+                ),
+                (
+                    EDIT,
+                    "/images/edits",
+                    json!({"prompt":"synthetic","images":["chat-asset:1"]}),
+                ),
+            ] {
+                let mut fake = Fake {
+                    expected_uri: Some(format!("{expected_base}{path}")),
+                    ..Fake::default()
+                };
+                let output = invoke_with(capability, input, &base, &mut fake).unwrap();
+                assert_eq!(
+                    fake.events.iter().filter(|event| **event == "post").count(),
+                    1
+                );
+                assert_eq!(output["image"]["bytes"], 69);
+            }
+        }
+    }
+
+    #[test]
     fn manifest_preserves_authority_and_closed_inputs() {
         let manifest = provider::manifest::<GptImage>().unwrap();
         assert_eq!(manifest.id.as_str(), "gpt-image");
@@ -392,6 +455,7 @@ mod tests {
             let output = invoke_with(
                 &capability(EDIT),
                 json!({"prompt":"repaint \"orange\"\n","images":images}),
+                &DEFAULT_BASE,
                 &mut fake,
             )
             .unwrap();
@@ -414,6 +478,7 @@ mod tests {
         invoke_with(
             &capability(GENERATE),
             json!({"prompt":"a tangerine"}),
+            &DEFAULT_BASE,
             &mut fake,
         )
         .unwrap();
@@ -438,7 +503,7 @@ mod tests {
             ),
         ] {
             let mut fake = Fake::default();
-            assert!(invoke_with(&capability(id), input, &mut fake).is_err());
+            assert!(invoke_with(&capability(id), input, &DEFAULT_BASE, &mut fake).is_err());
             assert!(fake.events.is_empty());
         }
         for mime in ["image/gif", "image/png\"},\"injected\":true", "text/plain"] {
@@ -450,6 +515,7 @@ mod tests {
                 invoke_with(
                     &capability(EDIT),
                     json!({"prompt":"x","images":["chat-asset:1"]}),
+                    &DEFAULT_BASE,
                     &mut fake
                 )
                 .is_err()
@@ -477,6 +543,7 @@ mod tests {
                 invoke_with(
                     &capability(EDIT),
                     json!({"prompt":"x","images":["chat-asset:1"]}),
+                    &DEFAULT_BASE,
                     &mut fake
                 )
                 .is_err()
@@ -489,7 +556,15 @@ mod tests {
                 response: Some(body.as_bytes().to_vec()),
                 ..Fake::default()
             };
-            assert!(invoke_with(&capability(GENERATE), json!({"prompt":"x"}), &mut fake).is_err());
+            assert!(
+                invoke_with(
+                    &capability(GENERATE),
+                    json!({"prompt":"x"}),
+                    &DEFAULT_BASE,
+                    &mut fake
+                )
+                .is_err()
+            );
             assert_eq!(fake.events, ["post", "read-response"]);
         }
     }
@@ -503,7 +578,7 @@ mod tests {
                 response: Some(body.as_bytes().to_vec()),
                 ..Fake::default()
             };
-            let output = invoke_with(&capability(EDIT), json!({"prompt":"x","images":["chat-asset:1","chat-asset:2","chat-asset:3","chat-asset:4","chat-asset:5"]}), &mut fake).unwrap();
+            let output = invoke_with(&capability(EDIT), json!({"prompt":"x","images":["chat-asset:1","chat-asset:2","chat-asset:3","chat-asset:4","chat-asset:5"]}), &DEFAULT_BASE, &mut fake).unwrap();
             assert_eq!(fake.written, payload.len());
             serde_json::to_string(&output).unwrap()
         });

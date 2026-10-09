@@ -3,13 +3,11 @@
 use crate::error::ProviderError;
 use dekopon_provider_sdk::{
     asset::Encoding,
-    provider::{Header, method},
+    provider::{Header, endpoint::Base, method},
 };
 
 use crate::{error, input::ImageRequest, input::Operation};
 
-pub(crate) const GENERATE_URL: &str = "https://chatgpt.com/backend-api/codex/images/generations";
-pub(crate) const EDIT_URL: &str = "https://chatgpt.com/backend-api/codex/images/edits";
 pub(crate) const MODEL: &str = "gpt-image-2";
 pub(crate) const ORIGINATOR: &str = "dekopon";
 const FIXED_TAIL: &str =
@@ -33,6 +31,7 @@ pub(crate) fn http_request<'a, H>(
     operation: Operation,
     request: &ImageRequest,
     images: &'a [(H, String)],
+    base: &Base,
 ) -> Result<Request<'a, H>, ProviderError> {
     let mut body = Vec::new();
     let mut literal = Vec::from(&b"{"[..]);
@@ -81,11 +80,12 @@ pub(crate) fn http_request<'a, H>(
     .collect::<Result<_, _>>()?;
     Ok(Request {
         method: method::POST.into(),
-        uri: match operation {
-            Operation::Generate => GENERATE_URL,
-            Operation::Edit => EDIT_URL,
-        }
-        .into(),
+        uri: base
+            .join(match operation {
+                Operation::Generate => "/images/generations",
+                Operation::Edit => "/images/edits",
+            })
+            .map_err(|_| error::failure("the fixed image path could not be joined"))?,
         headers,
         body,
     })
