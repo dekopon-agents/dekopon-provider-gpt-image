@@ -9,11 +9,11 @@
 #   chmod 0700 ~/.local/run/dekopon
 #   chmod 0700 ~/.config/dekopon && chmod 0600 ~/.config/dekopon/chatgpt-auth.gpt-image.json
 # Every relative path below resolves against this file's own directory, so the example runs from a
-# checkout without editing repository paths. The absolute `/home/xavier/...` paths are runtime state
+# checkout without editing repository paths. The absolute `/home/you/...` paths are runtime state
 # and are the ones to change.
 apiVersion: dekopon.dev/brokerd/v1alpha1
 
-socketPath: /home/xavier/.local/run/dekopon/broker.sock
+socketPath: /home/you/.local/run/dekopon/broker.sock
 
 brokerPrincipal: local-broker
 policyRevision: chat-image-studio-2026-09
@@ -36,7 +36,7 @@ providers:
 
 assets:
   # Create broker-owned mode 0700. Startup clears stale entries; outputs are temporary.
-  rootPath: /home/xavier/.local/share/dekopon/assets
+  rootPath: /home/you/.local/share/dekopon/assets
   maxInFlightBytes: 67108864
 
 # No large JSON/frame/request override: images travel out of band. Streamed HTTP responses still
