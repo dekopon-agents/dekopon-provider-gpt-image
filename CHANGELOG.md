@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+## [0.6.1] - 2026-11-23
+
+### Fixed
+
+- The chat-image-studio example uses generic /home/you paths instead of a named home directory.
+
 ## [0.6.0] - 2026-10-09
 
 ### Added
