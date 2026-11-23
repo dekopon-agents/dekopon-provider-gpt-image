@@ -1,7 +1,7 @@
 # dekopon-provider-gpt-image
 
 GPT Image generation and editing for [Dekopon](https://github.com/dekopon-agents/dekopon), as a
-WebAssembly component. Version 0.6.0 builds against the published core SDK `=0.42.0`
+WebAssembly component. Version 0.6.1 builds against the published core SDK `=0.42.0`
 and requires the streams-only provider world.
 Billing uses a ChatGPT subscription, not a platform API key: this calls the route Codex calls.
 
